@@ -1,0 +1,27 @@
+server:
+  port: 8080
+  mode: debug # debug | release
+
+database:
+  host: 127.0.0.1
+  port: 3306
+  user: root
+  password: ""
+  dbname: comic_admin
+  charset: utf8mb4
+  max_idle_conns: 10
+  max_open_conns: 100
+
+jwt:
+  secret: "change-me-to-a-random-string"
+  expire_hours: 24
+
+storage:
+  local_dir: "/path/to/your/media/storage"
+
+cos:
+  secret_id: ""
+  secret_key: ""
+  bucket: ""
+  region: ""
+  base_url: ""
