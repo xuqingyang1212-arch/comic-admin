@@ -1,8 +1,9 @@
 "use client"
 
 import { useState, useMemo, useRef, useEffect, useCallback } from "react"
-import { Search, RotateCcw, ChevronDown, X } from "lucide-react"
+import { Search, RotateCcw, X } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { SelectFilter } from "@/components/shared"
 import { scriptDraftApi, bookApi } from "@/lib/api"
 import { toast } from "@/lib/toast"
 import { ListPagination, type PageSizeOption } from "@/components/list-pagination"
@@ -112,76 +113,6 @@ const auditStatusStyle: Record<string, { bg: string; text: string }> = {
   审核不通过: { bg: "bg-[#fef2f2]", text: "text-[#dc2626]" },
 }
 
-// ─── 单选下拉组件 ─────────────────────────────────────────────────────────────
-
-function SelectFilter({
-  label,
-  value,
-  options,
-  onChange,
-  placeholder = "请选择",
-  width = 120,
-}: {
-  label: string
-  value: string
-  options: { label: string; value: string }[]
-  onChange: (v: string) => void
-  placeholder?: string
-  width?: number
-}) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-  const selected = options.find((o) => o.value === value)
-
-  useEffect(() => {
-    function handler(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener("mousedown", handler)
-    return () => document.removeEventListener("mousedown", handler)
-  }, [])
-
-  return (
-    <div className="flex items-center gap-2">
-      <span className="whitespace-nowrap text-[13px] text-[#374151]">{label}</span>
-      <div className="relative" style={{ width }} ref={ref}>
-        <button
-          type="button"
-          onClick={() => setOpen((o) => !o)}
-          className={cn(
-            "flex h-[30px] w-full items-center gap-1.5 rounded-[6px] border border-[#d1d5db] bg-white px-3 text-[13px] outline-none transition-colors",
-            open ? "border-[#38c08f]" : "hover:border-[#9ca3af]",
-            selected ? "text-[#374151]" : "text-[#9ca3af]"
-          )}
-        >
-          <span className="flex-1 text-left truncate">{selected ? selected.label : placeholder}</span>
-          {value ? (
-            <X size={11} className="shrink-0 text-[#9ca3af] hover:text-[#374151]"
-              onClick={(e) => { e.stopPropagation(); onChange(""); setOpen(false) }} />
-          ) : (
-            <ChevronDown size={12} className="shrink-0 text-[#9ca3af]" />
-          )}
-        </button>
-        {open && (
-          <div className="absolute left-0 top-full z-30 mt-1 w-full min-w-[120px] rounded-[6px] border border-[#e5e7eb] bg-white py-1 shadow-lg">
-            {options.map((opt) => (
-              <button
-                key={opt.value}
-                className={cn(
-                  "flex w-full px-3 py-1.5 text-[13px] hover:bg-[#f0fdf4]",
-                  value === opt.value ? "font-medium text-[#38c08f]" : "text-[#374151]"
-                )}
-                onMouseDown={() => { onChange(opt.value); setOpen(false) }}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
 
 // ─── 审核记录节点样式（与剧本审核保持一致）──────────────────────────────────────
 
@@ -728,7 +659,7 @@ export default function ScriptCreation() {
               className="h-[30px] w-[160px] rounded-[6px] border border-[#d1d5db] bg-white px-3 text-[13px] text-[#374151] placeholder-[#9ca3af] outline-none focus:border-[#38c08f] transition-colors"
             />
           </div>
-          <SelectFilter label="类型" value={filters.scriptType} options={scriptTypeOptions} onChange={(v) => setField("scriptType", v)} width={112} />
+          <SelectFilter label="类型" value={filters.scriptType} options={scriptTypeOptions} onChange={(v) => setField("scriptType", v)} width="w-[112px]" />
           <div className="flex items-center gap-2">
             <span className="whitespace-nowrap text-[13px] text-[#374151]">原剧本ID</span>
             <input
@@ -739,7 +670,7 @@ export default function ScriptCreation() {
               className="h-[30px] w-[160px] rounded-[6px] border border-[#d1d5db] bg-white px-3 text-[13px] text-[#374151] placeholder-[#9ca3af] outline-none focus:border-[#38c08f] transition-colors"
             />
           </div>
-          <SelectFilter label="审核状态" value={filters.auditStatus} options={auditStatusOptions} onChange={(v) => setField("auditStatus", v)} placeholder="请选择状态" width={136} />
+          <SelectFilter label="审核状态" value={filters.auditStatus} options={auditStatusOptions} onChange={(v) => setField("auditStatus", v)} placeholder="请选择状态" width="w-[136px]" />
           <div className="flex items-center gap-2">
             <span className="whitespace-nowrap text-[13px] text-[#374151]">审核员</span>
             <input

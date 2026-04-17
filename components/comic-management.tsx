@@ -1,13 +1,15 @@
 "use client"
 
 import React, { useState, useMemo, useRef, useEffect, useCallback } from "react"
-import { Search, RotateCcw, ChevronDown, ChevronLeft, ChevronRight, Calendar, X, Download, ZoomIn, Play, Plus, Trash2 } from "lucide-react"
+import { createPortal } from "react-dom"
+import { Search, RotateCcw, ChevronDown, X, Download, ZoomIn, Play, Plus, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { comicApi, assetUrl } from "@/lib/api"
 import { toast } from "@/lib/toast"
 import { InlineVideoPlayer } from "@/components/video-thumbnail"
 import { ListPagination, type PageSizeOption } from "@/components/list-pagination"
 import { usePerm } from "@/components/admin-layout"
+import { FilterInput, SelectFilter, DateRangePicker } from "@/components/shared"
 
 // ─── 类型定义 ──────────────────────────────────────────────────────────────────
 
@@ -170,103 +172,6 @@ const statusStyle: Record<string, { bg: string; text: string }> = {
   "已完成": { bg: "bg-[#ecfdf5]", text: "text-[#059669]" },
   "待审核": { bg: "bg-[#fff7ed]", text: "text-[#ea580c]" },
   "已下架": { bg: "bg-[#f3f4f6]", text: "text-[#6b7280]" },
-}
-
-// ─── 筛选组件（任务大厅统一风格）────────────────────────────────────────────
-
-function FilterInput({
-  label,
-  placeholder,
-  value,
-  onChange,
-  width = "w-[148px]",
-}: {
-  label: string
-  placeholder: string
-  value: string
-  onChange: (v: string) => void
-  width?: string
-}) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className="whitespace-nowrap text-[13px] text-[#374151]">{label}</span>
-      <input
-        type="text"
-        placeholder={placeholder}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className={cn("h-[30px] rounded-[6px] border border-[#d1d5db] bg-white px-3 text-[13px] text-[#374151] placeholder-[#9ca3af] outline-none transition-colors focus:border-[#38c08f]", width)}
-      />
-    </div>
-  )
-}
-
-function SelectFilter({
-  label,
-  value,
-  onChange,
-  options,
-  width = "w-[120px]",
-}: {
-  label: string
-  value: string
-  onChange: (v: string) => void
-  options: { label: string; value: string }[]
-  width?: string
-}) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-  const selected = options.find((o) => o.value === value)
-
-  useEffect(() => {
-    function handler(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener("mousedown", handler)
-    return () => document.removeEventListener("mousedown", handler)
-  }, [])
-
-  return (
-    <div className="flex items-center gap-2">
-      <span className="whitespace-nowrap text-[13px] text-[#374151]">{label}</span>
-      <div className="relative" ref={ref}>
-        <button
-          type="button"
-          onClick={() => setOpen((o) => !o)}
-          className={cn(
-            "flex h-[30px] items-center gap-1.5 rounded-[6px] border border-[#d1d5db] bg-white px-3 text-[13px] transition-colors",
-            open ? "border-[#38c08f]" : "hover:border-[#38c08f]",
-            selected ? "text-[#374151]" : "text-[#9ca3af]",
-            width
-          )}
-        >
-          <span className="flex-1 text-left truncate">{selected ? selected.label : "请选择"}</span>
-          {value ? (
-            <X size={11} className="shrink-0 text-[#9ca3af] hover:text-[#374151]"
-              onClick={(e) => { e.stopPropagation(); onChange(""); setOpen(false) }} />
-          ) : (
-            <ChevronDown size={12} className="shrink-0 text-[#9ca3af]" />
-          )}
-        </button>
-        {open && (
-          <div className="absolute left-0 top-[34px] z-50 min-w-full rounded-[6px] border border-[#e5e7eb] bg-white py-1 shadow-lg">
-            {options.map((opt) => (
-              <button
-                key={opt.value}
-                onClick={() => { onChange(opt.value); setOpen(false) }}
-                className={cn(
-                  "flex w-full items-center px-3 py-2 text-[13px] hover:bg-[#f0fdf4] transition-colors whitespace-nowrap",
-                  value === opt.value ? "text-[#38c08f] font-medium" : "text-[#374151]"
-                )}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  )
 }
 
 // ─── 视频缩略图 Hook ────────────────────────────────────────────────────────
@@ -722,6 +627,7 @@ const DOWNLOAD_CONTENT_BY_KEY: Record<string, string> = {
 
 function DownloadMenu({ row }: { row: ComicRow }) {
   const [open, setOpen] = useState(false)
+  const [confirm, setConfirm] = useState<{ content: string; label: string } | null>(null)
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -732,20 +638,25 @@ function DownloadMenu({ row }: { row: ComicRow }) {
     return () => document.removeEventListener("mousedown", handler)
   }, [])
 
-  async function handleItem(key: string) {
-    setOpen(false)
-    const content = DOWNLOAD_CONTENT_BY_KEY[key]
-    if (!content) return
+  async function doDownload(content: string, force: boolean) {
     try {
-      const res = await comicApi.download(row.id, content)
-      const msg =
-        res && typeof res === "object" && "message" in res
-          ? String((res as { message: string }).message)
-          : "下载任务已创建，请到下载中心查看"
-      toast.success(msg)
+      const res = await comicApi.download(row.id, content, force)
+      if (res?.duplicate) {
+        const label = Object.entries(DOWNLOAD_CONTENT_BY_KEY).find(([, v]) => v === content)?.[1] ?? content
+        setConfirm({ content, label })
+        return
+      }
+      toast.success(res?.message ?? "下载任务已创建，请到下载中心查看")
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "下载失败")
     }
+  }
+
+  function handleItem(key: string) {
+    setOpen(false)
+    const content = DOWNLOAD_CONTENT_BY_KEY[key]
+    if (!content) return
+    void doDownload(content, false)
   }
 
   return (
@@ -769,6 +680,38 @@ function DownloadMenu({ row }: { row: ComicRow }) {
             </button>
           ))}
         </div>
+      )}
+      {confirm && createPortal(
+        <>
+          <div className="fixed inset-0 z-[200] bg-black/20" onClick={() => setConfirm(null)} />
+          <div className="fixed inset-0 z-[201] flex items-center justify-center">
+            <div className="w-[360px] rounded-[10px] bg-white shadow-2xl">
+              <div className="px-6 pt-5 pb-2">
+                <p className="text-[15px] font-semibold text-[#111827]">提示</p>
+              </div>
+              <div className="px-6 py-3">
+                <p className="text-[13px] leading-relaxed text-[#374151]">
+                  下载中心已存在该【{confirm.label}】的下载任务，是否重新打包下载？
+                </p>
+              </div>
+              <div className="flex justify-end gap-2 border-t border-[#f3f4f6] px-6 py-3">
+                <button
+                  onClick={() => setConfirm(null)}
+                  className="rounded-[6px] border border-[#d1d5db] bg-white px-4 py-1.5 text-[13px] text-[#374151] hover:bg-[#f5f6f7] transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={() => { const c = confirm.content; setConfirm(null); void doDownload(c, true) }}
+                  className="rounded-[6px] bg-[#38c08f] px-4 py-1.5 text-[13px] font-medium text-white hover:bg-[#2da87a] transition-colors"
+                >
+                  重新下载
+                </button>
+              </div>
+            </div>
+          </div>
+        </>,
+        document.body
       )}
     </div>
   )
@@ -1259,118 +1202,6 @@ function EditDrawer({ row, onClose }: { row: ComicRow; onClose: () => void }) {
 
 
 const PAGE_SIZE_OPTIONS: PageSizeOption[] = [10, 20, 50]
-
-// ─── 日期范围选择器（与书籍管理保持一致）────────────────────────────────────
-
-const WEEK_LABELS = ["日", "一", "二", "三", "四", "五", "六"]
-const MONTHS_CN = ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"]
-
-function getDaysInMonth(year: number, month: number) { return new Date(year, month + 1, 0).getDate() }
-function getFirstDayOfWeek(year: number, month: number) { return new Date(year, month, 1).getDay() }
-function padDate(n: number) { return String(n).padStart(2, "0") }
-function toDateStr(year: number, month: number, day: number) { return `${year}-${padDate(month + 1)}-${padDate(day)}` }
-
-interface MonthPanelProps {
-  year: number; month: number; hoverDate: string; startDate: string; endDate: string
-  onDayClick: (d: string) => void; onDayHover: (d: string) => void
-}
-
-function MonthPanel({ year, month, hoverDate, startDate, endDate, onDayClick, onDayHover }: MonthPanelProps) {
-  const days = getDaysInMonth(year, month)
-  const firstDay = getFirstDayOfWeek(year, month)
-  const cells: (number | null)[] = Array(firstDay).fill(null).concat(Array.from({ length: days }, (_, i) => i + 1))
-  while (cells.length % 7 !== 0) cells.push(null)
-  return (
-    <div className="w-[216px]">
-      <div className="mb-2 flex items-center justify-center">
-        <span className="text-[13px] font-medium text-[#111827]">{year}年 {MONTHS_CN[month]}</span>
-      </div>
-      <div className="grid grid-cols-7">
-        {WEEK_LABELS.map((w) => (
-          <div key={w} className="flex h-7 items-center justify-center text-[11px] text-[#9ca3af]">{w}</div>
-        ))}
-        {cells.map((day, idx) => {
-          if (!day) return <div key={idx} className="h-7" />
-          const d = toDateStr(year, month, day)
-          const isStart = d === startDate
-          const isEnd = d === endDate
-          const rangeEnd = endDate || (startDate && hoverDate > startDate ? hoverDate : "")
-          const inRange = !!(startDate && rangeEnd && d > startDate && d < rangeEnd && !isStart && !isEnd)
-          return (
-            <div key={idx}
-              className={cn("flex h-7 cursor-pointer items-center justify-center text-[12.5px] rounded-[3px] transition-colors",
-                isStart || isEnd ? "bg-[#38c08f] text-white font-semibold"
-                  : inRange ? "bg-[#d1f5e9] text-[#059669]"
-                    : "text-[#374151] hover:bg-[#f0fdf4] hover:text-[#38c08f]")}
-              onClick={() => onDayClick(d)}
-              onMouseEnter={() => onDayHover(d)}
-            >{day}</div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-function DateRangePicker({ value = [], onChange }: { value?: [string, string] | []; onChange: (v: [string, string] | []) => void }) {
-  const today = new Date()
-  const [open, setOpen] = useState(false)
-  const [leftYear, setLeftYear] = useState(today.getFullYear())
-  const [leftMonth, setLeftMonth] = useState(today.getMonth() === 0 ? 0 : today.getMonth() - 1)
-  const [hoverDate, setHoverDate] = useState("")
-  const ref = useRef<HTMLDivElement>(null)
-  const rightYear = leftMonth === 11 ? leftYear + 1 : leftYear
-  const rightMonth = leftMonth === 11 ? 0 : leftMonth + 1
-  const safeValue: string[] = Array.isArray(value) ? value : []
-  const startDate = safeValue[0] ?? ""
-  const endDate = safeValue[1] ?? ""
-  useEffect(() => {
-    function handler(e: MouseEvent) { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
-    document.addEventListener("mousedown", handler)
-    return () => document.removeEventListener("mousedown", handler)
-  }, [])
-  function handleDayClick(d: string) {
-    if (!startDate || (startDate && endDate)) { onChange([d, ""] as unknown as [string, string]) }
-    else { onChange(d < startDate ? [d, startDate] : [startDate, d]); setOpen(false) }
-  }
-  function prevMonth() { if (leftMonth === 0) { setLeftYear(y => y - 1); setLeftMonth(11) } else setLeftMonth(m => m - 1) }
-  function nextMonth() { if (leftMonth === 11) { setLeftYear(y => y + 1); setLeftMonth(0) } else setLeftMonth(m => m + 1) }
-  const displayText = startDate && endDate ? `${startDate} 至 ${endDate}` : startDate ? `${startDate} 至 ...` : ""
-  return (
-    <div className="relative" ref={ref}>
-      <button type="button" onClick={() => setOpen(o => !o)}
-        className={cn("flex h-[30px] w-[236px] items-center gap-2 rounded-[6px] border border-[#d1d5db] bg-white px-3 text-[13px] transition-colors",
-          open ? "border-[#38c08f]" : "hover:border-[#38c08f]",
-          displayText ? "text-[#374151]" : "text-[#9ca3af]")}>
-        <Calendar size={13} className="shrink-0 text-[#9ca3af]" />
-        <span className="flex-1 truncate text-left">{displayText || "请选择日期范围"}</span>
-        {displayText ? (
-          <X size={12} className="shrink-0 text-[#9ca3af] hover:text-[#374151]"
-            onClick={(e) => { e.stopPropagation(); onChange([]); setOpen(false) }} />
-        ) : <ChevronDown size={12} className="shrink-0 text-[#9ca3af]" />}
-      </button>
-      {open && (
-        <div className="absolute left-0 top-[36px] z-50 flex gap-4 rounded-[8px] border border-[#e5e7eb] bg-white px-5 py-4 shadow-lg">
-          <div className="flex flex-col">
-            <div className="mb-2 flex items-center justify-between">
-              <button onClick={prevMonth} className="flex h-6 w-6 items-center justify-center rounded hover:bg-[#f3f4f6] text-[#6b7280]"><ChevronLeft size={14} /></button>
-              <span />
-            </div>
-            <MonthPanel year={leftYear} month={leftMonth} hoverDate={hoverDate} startDate={startDate} endDate={endDate} onDayClick={handleDayClick} onDayHover={setHoverDate} />
-          </div>
-          <div className="w-px bg-[#f3f4f6]" />
-          <div className="flex flex-col">
-            <div className="mb-2 flex items-center justify-end">
-              <span />
-              <button onClick={nextMonth} className="flex h-6 w-6 items-center justify-center rounded hover:bg-[#f3f4f6] text-[#6b7280]"><ChevronRight size={14} /></button>
-            </div>
-            <MonthPanel year={rightYear} month={rightMonth} hoverDate={hoverDate} startDate={startDate} endDate={endDate} onDayClick={handleDayClick} onDayHover={setHoverDate} />
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
 
 const comicMock: ComicRow[] = []
 

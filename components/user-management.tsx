@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback } from "react"
 import { Search, RotateCcw, ChevronDown, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { ListPagination, type PageSizeOption } from "@/components/list-pagination"
+import { FilterInput, SelectFilter, StatusBadge } from "@/components/shared"
 import { userApi, roleApi } from "@/lib/api"
 import { usePerm } from "@/components/admin-layout"
 
@@ -81,82 +82,6 @@ function mapApiUser(u: Record<string, unknown>): User {
     status: st as UserStatus,
     createdAt,
   }
-}
-
-// ─────────────── FilterInput ───────────────
-function FilterInput({
-  label, placeholder, value, onChange, width = "w-[148px]",
-}: {
-  label: string; placeholder: string; value: string; onChange: (v: string) => void; width?: string
-}) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className="whitespace-nowrap text-[13px] text-[#374151]">{label}</span>
-      <input
-        type="text" placeholder={placeholder} value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className={cn("h-[30px] rounded-[6px] border border-[#d1d5db] bg-white px-3 text-[13px] text-[#374151] placeholder-[#9ca3af] outline-none transition-colors focus:border-[#38c08f]", width)}
-      />
-    </div>
-  )
-}
-
-// ─────────────── SelectFilter ───────────────
-function SelectFilter({
-  label, value, onChange, options, width = "w-[120px]",
-}: {
-  label: string; value: string; onChange: (v: string) => void; options: { label: string; value: string }[]; width?: string
-}) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-  const selected = options.find((o) => o.value === value)
-  useEffect(() => {
-    function handler(e: MouseEvent) { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
-    document.addEventListener("mousedown", handler)
-    return () => document.removeEventListener("mousedown", handler)
-  }, [])
-  return (
-    <div className="flex items-center gap-2">
-      <span className="whitespace-nowrap text-[13px] text-[#374151]">{label}</span>
-      <div className="relative" ref={ref}>
-        <button type="button" onClick={() => setOpen((o) => !o)}
-          className={cn("flex h-[30px] items-center gap-1.5 rounded-[6px] border border-[#d1d5db] bg-white px-3 text-[13px] transition-colors",
-            open ? "border-[#38c08f]" : "hover:border-[#38c08f]",
-            selected ? "text-[#374151]" : "text-[#9ca3af]", width)}>
-          <span className="flex-1 truncate text-left">{selected ? selected.label : "请选择"}</span>
-          {value ? (
-            <X size={11} className="shrink-0 text-[#9ca3af] hover:text-[#374151]"
-              onClick={(e) => { e.stopPropagation(); onChange(""); setOpen(false) }} />
-          ) : <ChevronDown size={12} className="shrink-0 text-[#9ca3af]" />}
-        </button>
-        {open && (
-          <div className="absolute left-0 top-[34px] z-50 min-w-full rounded-[6px] border border-[#e5e7eb] bg-white py-1 shadow-lg">
-            {options.map((opt) => (
-              <button key={opt.value} onClick={() => { onChange(opt.value); setOpen(false) }}
-                className={cn("flex w-full items-center px-3 py-2 text-[13px] hover:bg-[#f0fdf4] transition-colors whitespace-nowrap",
-                  value === opt.value ? "text-[#38c08f] font-medium" : "text-[#374151]")}>
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// ─────────────── Status Badge ───────────────
-function StatusBadge({ status }: { status: UserStatus }) {
-  const cfg: Record<UserStatus, { bg: string; text: string }> = {
-    启用: { bg: "bg-[#ecfdf5]", text: "text-[#059669]" },
-    禁用: { bg: "bg-[#f3f4f6]", text: "text-[#6b7280]" },
-  }
-  const c = cfg[status]
-  return (
-    <span className={cn("inline-flex items-center rounded-[4px] px-2 py-0.5 text-[11.5px] font-medium", c.bg, c.text)}>
-      {status}
-    </span>
-  )
 }
 
 // ─────────────── FormInput ───────────────
@@ -580,7 +505,7 @@ export default function UserManagement() {
                       </div>
                     </td>
                     <td className="px-4 py-3 text-[12.5px] text-[#6b7280] whitespace-nowrap">{row.createdAt}</td>
-                    <td className="px-4 py-3 whitespace-nowrap"><StatusBadge status={row.status} /></td>
+                    <td className="px-4 py-3 whitespace-nowrap"><StatusBadge status={row.status} config={{ "启用": { bg: "bg-[#ecfdf5]", text: "text-[#059669]" }, "禁用": { bg: "bg-[#f3f4f6]", text: "text-[#6b7280]" } }} /></td>
                     <td className="px-4 py-3 whitespace-nowrap">
                       {canEdit && (
                         <button onClick={() => openEdit(row)}

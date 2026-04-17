@@ -3,6 +3,7 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from "react"
 import { Search, RotateCcw, ChevronDown, CheckCircle, X, Bold, Underline, Strikethrough, Plus } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { SelectFilter } from "@/components/shared"
 import { scriptAuditApi, scriptDraftApi, bookApi } from "@/lib/api"
 import { toast } from "@/lib/toast"
 import { ListPagination, type PageSizeOption } from "@/components/list-pagination"
@@ -196,79 +197,6 @@ const approvalActionStyle: Record<string, { dot: string; bg: string; text: strin
 
 // ─── Toast (removed, using global toast) ──────────────────────────────────────
 
-// ─── SelectFilter 下拉选择 ─────────────────────────────────────────────────────
-
-function SelectFilter({
-  value,
-  onChange,
-  options,
-  placeholder,
-  showAll = false,
-}: {
-  value: string
-  onChange: (v: string) => void
-  options: { label: string; value: string }[]
-  placeholder: string
-  showAll?: boolean
-}) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-  const selected = options.find((o) => o.value === value)
-
-  useEffect(() => {
-    function handler(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener("mousedown", handler)
-    return () => document.removeEventListener("mousedown", handler)
-  }, [])
-
-  return (
-    <div className="relative" ref={ref}>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className={cn(
-          "flex h-[30px] w-[140px] items-center gap-1.5 rounded-[6px] border border-[#d1d5db] bg-white px-3 text-[13px] outline-none transition-colors",
-          open ? "border-[#38c08f]" : "hover:border-[#38c08f]",
-          selected ? "text-[#374151]" : "text-[#9ca3af]"
-        )}
-      >
-        <span className="flex-1 text-left truncate">{selected ? selected.label : placeholder}</span>
-        {value ? (
-          <X size={11} className="shrink-0 text-[#9ca3af] hover:text-[#374151]"
-            onClick={(e) => { e.stopPropagation(); onChange(""); setOpen(false) }} />
-        ) : (
-          <ChevronDown size={12} className="shrink-0 text-[#9ca3af]" />
-        )}
-      </button>
-      {open && (
-        <div className="absolute left-0 top-full z-30 mt-1 w-full min-w-[140px] rounded-[6px] border border-[#e5e7eb] bg-white py-1 shadow-lg">
-          {showAll && (
-            <button
-              className="flex w-full px-3 py-1.5 text-left text-[13px] text-[#9ca3af] hover:bg-[#f9fafb] transition-colors"
-              onMouseDown={() => { onChange(""); setOpen(false) }}
-            >
-              全部
-            </button>
-          )}
-          {options.map((opt) => (
-            <button
-              key={opt.value}
-              className={cn(
-                "flex w-full px-3 py-1.5 text-left text-[13px] hover:bg-[#f9fafb] transition-colors",
-                value === opt.value ? "text-[#38c08f] font-medium" : "text-[#374151]"
-              )}
-              onMouseDown={() => { onChange(opt.value); setOpen(false) }}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
 
 // ─── 审批进度抽屉 ──────────────────────────────────────────────────────────────
 
@@ -613,15 +541,14 @@ function TaskHallTab({
               className="h-[30px] w-[160px] rounded-[6px] border border-[#d1d5db] bg-white px-3 text-[13px] placeholder-[#9ca3af] outline-none focus:border-[#38c08f] transition-colors"
             />
           </div>
-          <div className="flex items-center gap-2">
-            <span className="whitespace-nowrap text-[13px] text-[#374151]">类型</span>
-            <SelectFilter
+          <SelectFilter
+              label="类型"
               value={filters.scriptType}
               onChange={(v) => setFilters((f) => ({ ...f, scriptType: v }))}
               options={scriptTypeOptions}
               placeholder="请选择"
+              width="w-[140px]"
             />
-          </div>
           <div className="flex items-center gap-2">
             <span className="whitespace-nowrap text-[13px] text-[#374151]">原剧本ID</span>
             <input
@@ -633,15 +560,14 @@ function TaskHallTab({
               className="h-[30px] w-[160px] rounded-[6px] border border-[#d1d5db] bg-white px-3 text-[13px] placeholder-[#9ca3af] outline-none focus:border-[#38c08f] transition-colors"
             />
           </div>
-          <div className="flex items-center gap-2">
-            <span className="whitespace-nowrap text-[13px] text-[#374151]">审核状态</span>
-            <SelectFilter
+          <SelectFilter
+              label="审核状态"
               value={filters.auditStatus}
               onChange={(v) => setFilters((f) => ({ ...f, auditStatus: v }))}
               options={auditStatusOptions}
               placeholder="请选择"
+              width="w-[140px]"
             />
-          </div>
           <div className="flex items-center gap-2">
             <span className="whitespace-nowrap text-[13px] text-[#374151]">编剧</span>
             <input
@@ -1915,15 +1841,14 @@ function MyReviewTab({
               className="h-[30px] w-[160px] rounded-[6px] border border-[#d1d5db] bg-white px-3 text-[13px] placeholder-[#9ca3af] outline-none focus:border-[#38c08f] transition-colors"
             />
           </div>
-          <div className="flex items-center gap-2">
-            <span className="whitespace-nowrap text-[13px] text-[#374151]">类型</span>
-            <SelectFilter
+          <SelectFilter
+              label="类型"
               value={filters.scriptType}
               onChange={(v) => setFilters((f) => ({ ...f, scriptType: v }))}
               options={scriptTypeOptions}
               placeholder="请选择"
+              width="w-[140px]"
             />
-          </div>
           <div className="flex items-center gap-2">
             <span className="whitespace-nowrap text-[13px] text-[#374151]">原剧本ID</span>
             <input
@@ -1935,15 +1860,14 @@ function MyReviewTab({
               className="h-[30px] w-[160px] rounded-[6px] border border-[#d1d5db] bg-white px-3 text-[13px] placeholder-[#9ca3af] outline-none focus:border-[#38c08f] transition-colors"
             />
           </div>
-          <div className="flex items-center gap-2">
-            <span className="whitespace-nowrap text-[13px] text-[#374151]">审核状态</span>
-            <SelectFilter
+          <SelectFilter
+              label="审核状态"
               value={filters.auditStatus}
               onChange={(v) => setFilters((f) => ({ ...f, auditStatus: v }))}
               options={myAuditStatusOptions}
               placeholder="请选择"
+              width="w-[140px]"
             />
-          </div>
           <div className="flex items-center gap-2">
             <span className="whitespace-nowrap text-[13px] text-[#374151]">编剧</span>
             <input

@@ -76,7 +76,10 @@ func ListComics(c *gin.Context) {
 }
 
 func GetComic(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, ok := ParseID(c, "id")
+	if !ok {
+		return
+	}
 	var comic model.Comic
 	if err := model.DB.Preload("Episodes", func(db *gorm.DB) *gorm.DB {
 		return db.Order("episode_num ASC")
@@ -94,7 +97,10 @@ func GetComic(c *gin.Context) {
 }
 
 func CreateDownloadTask(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, ok := ParseID(c, "id")
+	if !ok {
+		return
+	}
 	var comic model.Comic
 	if err := model.DB.First(&comic, id).Error; err != nil {
 		response.FailNotFound(c, "漫剧不存在")
@@ -103,18 +109,25 @@ func CreateDownloadTask(c *gin.Context) {
 
 	var req struct {
 		DownloadContent string `json:"downloadContent" binding:"required"`
+		Force           bool   `json:"force"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.FailBadRequest(c, "下载内容必填")
 		return
 	}
 
-	// Check if unexpired task exists
+	// Check if unexpired completed task exists
 	var existing model.DownloadTask
-	if err := model.DB.Where("comic_id = ? AND download_content = ? AND status = ? AND expires_at > ?",
-		id, req.DownloadContent, "已完成", time.Now()).First(&existing).Error; err == nil {
-		response.Fail(c, 400, "当前文件已存在，请到下载中心查看")
+	hasExisting := model.DB.Where("comic_id = ? AND download_content = ? AND status = ? AND expires_at > ?",
+		id, req.DownloadContent, "已完成", time.Now()).First(&existing).Error == nil
+
+	if hasExisting && !req.Force {
+		response.OK(c, gin.H{"duplicate": true, "message": "下载中心已存在该下载任务，是否重新下载？"})
 		return
+	}
+
+	if hasExisting {
+		model.DB.Model(&existing).Update("status", "已失效")
 	}
 
 	task := model.DownloadTask{
@@ -135,7 +148,10 @@ func CreateDownloadTask(c *gin.Context) {
 }
 
 func CreateRevision(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, ok := ParseID(c, "id")
+	if !ok {
+		return
+	}
 	var comic model.Comic
 	if err := model.DB.First(&comic, id).Error; err != nil {
 		response.FailNotFound(c, "漫剧不存在")

@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"strconv"
 	"strings"
 	"time"
 
@@ -49,7 +48,10 @@ func ListScriptDrafts(c *gin.Context) {
 }
 
 func GetScriptDraft(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, ok := ParseID(c, "id")
+	if !ok {
+		return
+	}
 	var draft model.ScriptDraft
 	if err := model.DB.Preload("Writer").Preload("Reviewer").First(&draft, id).Error; err != nil {
 		response.FailNotFound(c, "草稿不存在")
@@ -154,7 +156,10 @@ func CreateScriptDraft(c *gin.Context) {
 }
 
 func UpdateScriptDraft(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, ok := ParseID(c, "id")
+	if !ok {
+		return
+	}
 	var draft model.ScriptDraft
 	if err := model.DB.First(&draft, id).Error; err != nil {
 		response.FailNotFound(c, "草稿不存在")
@@ -186,7 +191,10 @@ func UpdateScriptDraft(c *gin.Context) {
 }
 
 func SubmitScriptDraft(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, ok := ParseID(c, "id")
+	if !ok {
+		return
+	}
 	var draft model.ScriptDraft
 	if err := model.DB.First(&draft, id).Error; err != nil {
 		response.FailNotFound(c, "草稿不存在")
@@ -219,7 +227,10 @@ func SubmitScriptDraft(c *gin.Context) {
 }
 
 func DeleteScriptDraft(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, ok := ParseID(c, "id")
+	if !ok {
+		return
+	}
 	var draft model.ScriptDraft
 	if err := model.DB.First(&draft, id).Error; err != nil {
 		response.FailNotFound(c, "草稿不存在")
@@ -240,7 +251,10 @@ func DeleteScriptDraft(c *gin.Context) {
 }
 
 func ListScriptAuditLogs(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, ok := ParseID(c, "id")
+	if !ok {
+		return
+	}
 	var logs []model.ScriptAuditLog
 	model.DB.Where("script_draft_id = ?", id).Preload("Operator").Order("created_at ASC").Find(&logs)
 	response.OK(c, logs)

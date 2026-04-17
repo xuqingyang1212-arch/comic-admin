@@ -224,8 +224,8 @@ export const comicReviewApi = {
 export const comicApi = {
   list: (params?: any) => get<PageData>("/comics", params),
   detail: (id: number) => get<any>(`/comics/${id}`),
-  download: (id: number, downloadContent: string) =>
-    post(`/comics/${id}/download`, { downloadContent }),
+  download: (id: number, downloadContent: string, force = false) =>
+    post<{ duplicate?: boolean; message?: string; taskId?: number }>(`/comics/${id}/download`, { downloadContent, force }),
   revision: (id: number, body: any) =>
     post(`/comics/${id}/revisions`, body),
 };

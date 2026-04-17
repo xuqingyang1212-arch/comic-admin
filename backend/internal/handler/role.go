@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"strconv"
 	"strings"
 
 	"comic-admin/internal/model"
@@ -55,7 +54,10 @@ func CreateRole(c *gin.Context) {
 }
 
 func UpdateRole(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, ok := ParseID(c, "id")
+	if !ok {
+		return
+	}
 	var req RoleReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.FailBadRequest(c, "参数错误")

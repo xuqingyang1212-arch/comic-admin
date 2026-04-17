@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react"
 import { X, Play, Pause, Volume2, VolumeX, Maximize, Minimize } from "lucide-react"
+import { assetUrl } from "@/lib/api"
 
 export interface UploadFileState {
   file: File
@@ -34,7 +35,8 @@ function fmtTime(s: number) {
 
 // ─── Inline Video Player ─────────────────────────────────────────────────────
 
-export function InlineVideoPlayer({ src, className, onEnded, autoPlay = false }: { src: string; className?: string; onEnded?: () => void; autoPlay?: boolean }) {
+export function InlineVideoPlayer({ src: rawSrc, className, onEnded, autoPlay = false }: { src: string; className?: string; onEnded?: () => void; autoPlay?: boolean }) {
+  const src = assetUrl(rawSrc) || rawSrc
   const videoRef = useRef<HTMLVideoElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
   const [started, setStarted] = useState(autoPlay)
@@ -243,7 +245,8 @@ export function InlineVideoPlayer({ src, className, onEnded, autoPlay = false }:
 
 // ─── Video Player Modal (弹窗播放器) ─────────────────────────────────────────
 
-export function VideoPlayerModal({ src, title, onClose }: { src: string; title?: string; onClose: () => void }) {
+export function VideoPlayerModal({ src: rawSrc, title, onClose }: { src: string; title?: string; onClose: () => void }) {
+  const src = assetUrl(rawSrc) || rawSrc
   const isBlob = src.startsWith("blob:")
   const blobRef = useRef(src)
   useEffect(() => {
@@ -536,9 +539,10 @@ export function RemoteVideoThumbnail({
   onRemove: () => void
 }) {
   const [thumb, setThumb] = useState<string | null>(null)
+  const resolvedUrl = assetUrl(state.remoteUrl) || state.remoteUrl
 
   useEffect(() => {
-    if (!state.remoteUrl) return
+    if (!resolvedUrl) return
     let cancelled = false
 
     function tryCapture(crossOrigin: boolean) {
@@ -565,13 +569,13 @@ export function RemoteVideoThumbnail({
       video.onerror = () => {
         if (crossOrigin && !cancelled) tryCapture(false)
       }
-      video.src = state.remoteUrl
+      video.src = resolvedUrl
       video.currentTime = 0.5
     }
 
     tryCapture(true)
     return () => { cancelled = true }
-  }, [state.remoteUrl])
+  }, [resolvedUrl])
 
   const sizeMB = (state.fileSize / 1024 / 1024).toFixed(1)
   return (

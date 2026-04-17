@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"crypto/rand"
 	"fmt"
 	"io"
+	"math/big"
 	"os"
 	"path/filepath"
 	"time"
@@ -22,7 +24,8 @@ type PresignReq struct {
 
 func buildKey(req PresignReq) (dir, key string) {
 	ext := filepath.Ext(req.FileName)
-	ts := time.Now().UnixMilli()
+	ts := time.Now().UnixNano()
+	rnd, _ := rand.Int(rand.Reader, big.NewInt(99999))
 	scene := req.Scene
 	if scene == "" {
 		scene = "uploads"
@@ -35,7 +38,7 @@ func buildKey(req PresignReq) (dir, key string) {
 	default:
 		dir = "files"
 	}
-	key = fmt.Sprintf("%s/%d%s", dir, ts, ext)
+	key = fmt.Sprintf("%s/%d_%05d%s", dir, ts, rnd.Int64(), ext)
 	return
 }
 
@@ -49,11 +52,10 @@ func GetPresignURL(c *gin.Context) {
 	_, key := buildKey(req)
 
 	if config.Global.COS.Bucket == "" {
-		baseURL := fmt.Sprintf("http://%s/uploads", c.Request.Host)
 		response.OK(c, gin.H{
 			"uploadUrl": fmt.Sprintf("http://%s/api/v1/upload/local/%s", c.Request.Host, key),
 			"fileKey":   key,
-			"fileUrl":   baseURL + "/" + key,
+			"fileUrl":   "/uploads/" + key,
 		})
 		return
 	}

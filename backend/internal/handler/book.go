@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"strconv"
 	"strings"
 
 	"comic-admin/internal/model"
@@ -62,7 +61,10 @@ func ListBooks(c *gin.Context) {
 }
 
 func GetBook(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, ok := ParseID(c, "id")
+	if !ok {
+		return
+	}
 
 	var book model.Book
 	if err := model.DB.First(&book, id).Error; err != nil {

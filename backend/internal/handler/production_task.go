@@ -2,7 +2,6 @@ package handler
 
 import (
 	"encoding/json"
-	"strconv"
 	"strings"
 	"time"
 
@@ -117,7 +116,10 @@ func attachScriptsToTasks(tasks []model.ProductionTask) {
 }
 
 func GetProductionTask(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, ok := ParseID(c, "id")
+	if !ok {
+		return
+	}
 	var task model.ProductionTask
 	if err := model.DB.Preload("Initiator").Preload("Producer").First(&task, id).Error; err != nil {
 		response.FailNotFound(c, "任务不存在")
@@ -142,7 +144,10 @@ func attachReviewEpisodeName(task *model.ProductionTask) {
 }
 
 func ClaimProductionTask(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, ok := ParseID(c, "id")
+	if !ok {
+		return
+	}
 	var task model.ProductionTask
 	if err := model.DB.First(&task, id).Error; err != nil {
 		response.FailNotFound(c, "任务不存在")
@@ -176,7 +181,10 @@ func ClaimProductionTask(c *gin.Context) {
 }
 
 func CancelProductionTask(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, ok := ParseID(c, "id")
+	if !ok {
+		return
+	}
 	var task model.ProductionTask
 	if err := model.DB.First(&task, id).Error; err != nil {
 		response.FailNotFound(c, "任务不存在")
@@ -233,7 +241,10 @@ func CancelProductionTask(c *gin.Context) {
 }
 
 func ListProductionAuditLogs(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, ok := ParseID(c, "id")
+	if !ok {
+		return
+	}
 	var logs []model.ReviewAuditLog
 	model.DB.Where("production_task_id = ?", id).Order("created_at ASC").Find(&logs)
 
@@ -250,7 +261,10 @@ func ListProductionAuditLogs(c *gin.Context) {
 }
 
 func ListDeliveries(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, ok := ParseID(c, "id")
+	if !ok {
+		return
+	}
 	deliveryType := c.Query("deliveryType")
 
 	db := model.DB.Where("task_id = ?", id)
@@ -264,7 +278,10 @@ func ListDeliveries(c *gin.Context) {
 }
 
 func SubmitDelivery(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, ok := ParseID(c, "id")
+	if !ok {
+		return
+	}
 	var task model.ProductionTask
 	if err := model.DB.First(&task, id).Error; err != nil {
 		response.FailNotFound(c, "任务不存在")
@@ -280,6 +297,14 @@ func SubmitDelivery(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.FailBadRequest(c, "参数错误")
 		return
+	}
+
+	// Remove old deliveries of the same type (auto-save drafts etc.)
+	var oldDeliveryIDs []int64
+	model.DB.Model(&model.TaskDelivery{}).Where("task_id = ? AND delivery_type = ?", id, req.DeliveryType).Pluck("id", &oldDeliveryIDs)
+	if len(oldDeliveryIDs) > 0 {
+		model.DB.Where("delivery_id IN ?", oldDeliveryIDs).Delete(&model.TaskDeliveryFile{})
+		model.DB.Where("id IN ?", oldDeliveryIDs).Delete(&model.TaskDelivery{})
 	}
 
 	delivery := model.TaskDelivery{
@@ -402,7 +427,10 @@ type TaskDeliveryFileReq struct {
 
 func SaveDeliveryDraft(c *gin.Context) {
 	// Same as SubmitDelivery but without status change
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, ok := ParseID(c, "id")
+	if !ok {
+		return
+	}
 
 	var req struct {
 		DeliveryType string                `json:"deliveryType"`

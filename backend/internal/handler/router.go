@@ -33,72 +33,74 @@ func SetupRouter(mode string) *gin.Engine {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
+	perm := middleware.RequirePerm
+
 	// Protected routes — global dedup middleware prevents double-submit within 3s window
 	auth := api.Group("", middleware.JWTAuth(), middleware.LoadPermissions(model.DB), middleware.PreventDuplicateSubmit(3*time.Second))
 	{
 		// --- User Management ---
 		auth.GET("/users/me", GetCurrentUser)
-		auth.GET("/users", ListUsers)
-		auth.PUT("/users/:id", UpdateUser)
+		auth.GET("/users", perm("system.user.list"), ListUsers)
+		auth.PUT("/users/:id", perm("system.user.edit"), UpdateUser)
 
 		// --- Role Management ---
-		auth.GET("/roles", ListRoles)
-		auth.POST("/roles", CreateRole)
-		auth.PUT("/roles/:id", UpdateRole)
+		auth.GET("/roles", perm("system.role.list"), ListRoles)
+		auth.POST("/roles", perm("system.role.add"), CreateRole)
+		auth.PUT("/roles/:id", perm("system.role.edit"), UpdateRole)
 		auth.GET("/permissions/tree", GetPermissionTree)
 
 		// --- Books ---
-		auth.GET("/books", ListBooks)
-		auth.GET("/books/:id", GetBook)
+		auth.GET("/books", perm("resource.book.list"), ListBooks)
+		auth.GET("/books/:id", perm("resource.book.detail"), GetBook)
 
 		// --- Script Drafts (creation) ---
-		auth.GET("/script-drafts", ListScriptDrafts)
+		auth.GET("/script-drafts", perm("scriptCreate.list"), ListScriptDrafts)
 		auth.GET("/script-drafts/:id", GetScriptDraft)
-		auth.POST("/script-drafts", CreateScriptDraft)
-		auth.PUT("/script-drafts/:id", UpdateScriptDraft)
-		auth.POST("/script-drafts/:id/submit", SubmitScriptDraft)
-		auth.DELETE("/script-drafts/:id", DeleteScriptDraft)
-		auth.GET("/script-drafts/:id/audit-logs", ListScriptAuditLogs)
+		auth.POST("/script-drafts", perm("scriptCreate.edit"), CreateScriptDraft)
+		auth.PUT("/script-drafts/:id", perm("scriptCreate.edit"), UpdateScriptDraft)
+		auth.POST("/script-drafts/:id/submit", perm("scriptCreate.edit"), SubmitScriptDraft)
+		auth.DELETE("/script-drafts/:id", perm("scriptCreate.delete"), DeleteScriptDraft)
+		auth.GET("/script-drafts/:id/audit-logs", perm("scriptCreate.log"), ListScriptAuditLogs)
 
 		// --- Script Audit ---
-		auth.GET("/script-audit/hall", ListScriptAuditHall)
-		auth.GET("/script-audit/mine", ListScriptAuditMine)
-		auth.POST("/script-audit/:id/claim", ClaimScriptAudit)
-		auth.POST("/script-audit/:id/review", ReviewScriptAudit)
-		auth.PUT("/script-audit/:id/save", SaveScriptAuditDraft)
+		auth.GET("/script-audit/hall", perm("review.script.hall_list"), ListScriptAuditHall)
+		auth.GET("/script-audit/mine", perm("review.script.my_list"), ListScriptAuditMine)
+		auth.POST("/script-audit/:id/claim", perm("review.script.hall_take"), ClaimScriptAudit)
+		auth.POST("/script-audit/:id/review", perm("review.script.my_review"), ReviewScriptAudit)
+		auth.PUT("/script-audit/:id/save", perm("review.script.my_review"), SaveScriptAuditDraft)
 
 		// --- Scripts (library) ---
-		auth.GET("/scripts", ListScripts)
-		auth.GET("/scripts/:id", GetScript)
-		auth.POST("/scripts/:id/production-tasks", PublishProductionTask)
-		auth.POST("/scripts/:id/remakes", CreateScriptRemake)
+		auth.GET("/scripts", perm("resource.script.list"), ListScripts)
+		auth.GET("/scripts/:id", perm("resource.script.detail"), GetScript)
+		auth.POST("/scripts/:id/production-tasks", perm("resource.script.publish"), PublishProductionTask)
+		auth.POST("/scripts/:id/remakes", perm("resource.script.remake"), CreateScriptRemake)
 
 		// --- Production Tasks ---
-		auth.GET("/production-tasks/hall", ListProductionTaskHall)
-		auth.GET("/production-tasks/mine", ListProductionTaskMine)
+		auth.GET("/production-tasks/hall", perm("comicMake.hall.list"), ListProductionTaskHall)
+		auth.GET("/production-tasks/mine", perm("comicMake.my.list"), ListProductionTaskMine)
 		auth.GET("/production-tasks/:id", GetProductionTask)
-		auth.POST("/production-tasks/:id/claim", ClaimProductionTask)
-		auth.POST("/production-tasks/:id/cancel", CancelProductionTask)
+		auth.POST("/production-tasks/:id/claim", perm("comicMake.hall.take"), ClaimProductionTask)
+		auth.POST("/production-tasks/:id/cancel", perm("comicMake.hall.cancel"), CancelProductionTask)
 		auth.GET("/production-tasks/:id/audit-logs", ListProductionAuditLogs)
 		auth.GET("/production-tasks/:id/deliveries", ListDeliveries)
 		auth.POST("/production-tasks/:id/deliveries", SubmitDelivery)
 		auth.PUT("/production-tasks/:id/deliveries/draft", SaveDeliveryDraft)
 
 		// --- Comic Review ---
-		auth.GET("/comic-review/tasks", ListComicReviewTasks)
-		auth.GET("/comic-review/tasks/:id", GetComicReviewTask)
-		auth.POST("/comic-review/tasks/:id/review", ReviewComicTask)
-		auth.PUT("/comic-review/tasks/:id/save", SaveComicReviewDraft)
-		auth.GET("/comic-review/tasks/:id/logs", ListComicReviewLogs)
+		auth.GET("/comic-review/tasks", perm("review.comic.list"), ListComicReviewTasks)
+		auth.GET("/comic-review/tasks/:id", perm("review.comic.detail"), GetComicReviewTask)
+		auth.POST("/comic-review/tasks/:id/review", perm("review.comic.review"), ReviewComicTask)
+		auth.PUT("/comic-review/tasks/:id/save", perm("review.comic.review"), SaveComicReviewDraft)
+		auth.GET("/comic-review/tasks/:id/logs", perm("review.comic.log"), ListComicReviewLogs)
 
 		// --- Comics ---
-		auth.GET("/comics", ListComics)
-		auth.GET("/comics/:id", GetComic)
-		auth.POST("/comics/:id/download", CreateDownloadTask)
-		auth.POST("/comics/:id/revisions", CreateRevision)
+		auth.GET("/comics", perm("resource.comic.list"), ListComics)
+		auth.GET("/comics/:id", perm("resource.comic.detail"), GetComic)
+		auth.POST("/comics/:id/download", perm("resource.comic.download"), CreateDownloadTask)
+		auth.POST("/comics/:id/revisions", perm("resource.comic.revise"), CreateRevision)
 
 		// --- Download Center ---
-		auth.GET("/download/tasks", ListDownloadTasks)
+		auth.GET("/download/tasks", perm("resource.comic.download"), ListDownloadTasks)
 		auth.GET("/download/tasks/:id/url", GetDownloadURL)
 		auth.POST("/download/tasks/:id/retry", RetryDownloadTask)
 

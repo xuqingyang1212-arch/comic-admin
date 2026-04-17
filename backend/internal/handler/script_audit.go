@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"strconv"
 	"strings"
 	"time"
 
@@ -69,7 +68,10 @@ func ListScriptAuditMine(c *gin.Context) {
 }
 
 func ClaimScriptAudit(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, ok := ParseID(c, "id")
+	if !ok {
+		return
+	}
 	var draft model.ScriptDraft
 	if err := model.DB.First(&draft, id).Error; err != nil {
 		response.FailNotFound(c, "任务不存在")
@@ -108,7 +110,10 @@ type ScriptReviewReq struct {
 }
 
 func ReviewScriptAudit(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, ok := ParseID(c, "id")
+	if !ok {
+		return
+	}
 	var req ScriptReviewReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.FailBadRequest(c, "参数错误")
@@ -188,7 +193,10 @@ func ReviewScriptAudit(c *gin.Context) {
 }
 
 func SaveScriptAuditDraft(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, ok := ParseID(c, "id")
+	if !ok {
+		return
+	}
 	var body struct {
 		Content           string  `json:"content"`
 		ScriptName        string  `json:"scriptName"`

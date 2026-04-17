@@ -69,7 +69,10 @@ func ListComicReviewTasks(c *gin.Context) {
 }
 
 func GetComicReviewTask(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, ok := ParseID(c, "id")
+	if !ok {
+		return
+	}
 
 	var task model.ReviewTask
 	if err := model.DB.First(&task, id).Error; err != nil {
@@ -112,7 +115,7 @@ func GetComicReviewTask(c *gin.Context) {
 		stageType := strings.TrimSuffix(task.TaskType, "审核")
 		var delivery model.TaskDelivery
 		if model.DB.Where("task_id = ? AND delivery_type = ?", task.ProductionTaskID, stageType).
-			First(&delivery).Error == nil {
+			Order("created_at DESC").First(&delivery).Error == nil {
 			var files []model.TaskDeliveryFile
 			model.DB.Where("delivery_id = ?", delivery.ID).Find(&files)
 			delivery.Files = files
@@ -135,7 +138,10 @@ type ReviewOpinionReq struct {
 }
 
 func ReviewComicTask(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, ok := ParseID(c, "id")
+	if !ok {
+		return
+	}
 	var req ComicReviewReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.FailBadRequest(c, "参数错误")
@@ -230,7 +236,7 @@ func ReviewComicTask(c *gin.Context) {
 
 func createComicFromTask(task *model.ProductionTask, reviewTask *model.ReviewTask) {
 	var delivery model.TaskDelivery
-	model.DB.Where("task_id = ? AND delivery_type = ?", task.ID, "终版").Preload("Files").First(&delivery)
+	model.DB.Where("task_id = ? AND delivery_type = ?", task.ID, "终版").Preload("Files").Order("created_at DESC").First(&delivery)
 
 	var script model.Script
 	model.DB.First(&script, task.ScriptID)
@@ -283,7 +289,7 @@ func updateComicFromTask(task *model.ProductionTask, reviewTask *model.ReviewTas
 		return
 	}
 	var delivery model.TaskDelivery
-	model.DB.Where("task_id = ? AND delivery_type = ?", task.ID, "修改版").Preload("Files").First(&delivery)
+	model.DB.Where("task_id = ? AND delivery_type = ?", task.ID, "修改版").Preload("Files").Order("created_at DESC").First(&delivery)
 
 	if delivery.CoverURL != "" {
 		model.DB.Model(&model.Comic{}).Where("id = ?", *task.ComicID).Update("cover_url", delivery.CoverURL)
@@ -307,7 +313,10 @@ func updateComicFromTask(task *model.ProductionTask, reviewTask *model.ReviewTas
 }
 
 func SaveComicReviewDraft(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, ok := ParseID(c, "id")
+	if !ok {
+		return
+	}
 	var req struct {
 		Opinions    []ReviewOpinionReq `json:"opinions"`
 		EpisodeName string             `json:"episodeName"`
@@ -338,7 +347,10 @@ func SaveComicReviewDraft(c *gin.Context) {
 }
 
 func ListComicReviewLogs(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, ok := ParseID(c, "id")
+	if !ok {
+		return
+	}
 	var reviewTask model.ReviewTask
 	if err := model.DB.First(&reviewTask, id).Error; err != nil {
 		response.FailNotFound(c, "审核任务不存在")
@@ -348,8 +360,8 @@ func ListComicReviewLogs(c *gin.Context) {
 	stageType := strings.TrimSuffix(reviewTask.TaskType, "审核")
 
 	var logs []model.ReviewAuditLog
-	model.DB.Where("production_task_id = ? AND stage_type = ? AND action NOT IN ?",
-		reviewTask.ProductionTaskID, stageType, []string{"领取任务", "发起成片修改"}).
+	model.DB.Where("production_task_id = ? AND stage_type = ? AND action != ?",
+		reviewTask.ProductionTaskID, stageType, "领取任务").
 		Order("created_at ASC").Find(&logs)
 
 	for i := range logs {

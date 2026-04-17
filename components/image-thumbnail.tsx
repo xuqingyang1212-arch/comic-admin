@@ -3,6 +3,7 @@
 import { useRef, useEffect, useState } from "react"
 import { X, Upload } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { assetUrl } from "@/lib/api"
 import type { UploadFileState, RemoteFileState } from "@/components/video-thumbnail"
 
 export function ImagePreviewModal({ file, onClose }: { file: File; onClose: () => void }) {
@@ -217,7 +218,7 @@ function RemoteImageThumbnail({
         title="点击放大预览"
         type="button"
       >
-        <img src={state.remoteUrl} alt={state.fileName} className="h-[52px] w-[52px] object-cover" />
+        <img src={assetUrl(state.remoteUrl)} alt={state.fileName} className="h-[52px] w-[52px] object-cover" />
       </button>
       <div className="flex flex-1 flex-col gap-0.5 min-w-0">
         <span className="truncate text-[12px] font-medium text-[#111827]">{state.fileName}</span>
@@ -269,10 +270,10 @@ export function ImageUploadWithProgress({
 
   function buildGalleryAndOpen(clickedIndex: number) {
     const items: { src: string; title?: string }[] = []
-    for (const r of effectiveRemote) items.push({ src: r.remoteUrl, title: r.fileName })
+    for (const r of effectiveRemote) items.push({ src: assetUrl(r.remoteUrl), title: r.fileName })
     for (const s of states) {
       if (!s.done) continue
-      items.push({ src: s.remoteUrl ?? getLocalUrl(s.file), title: s.file.name })
+      items.push({ src: assetUrl(s.remoteUrl) || getLocalUrl(s.file), title: s.file.name })
     }
     if (items.length > 0) setGalleryState({ images: items, index: Math.min(clickedIndex, items.length - 1) })
   }

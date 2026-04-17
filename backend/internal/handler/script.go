@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"strconv"
 	"strings"
 	"time"
 
@@ -51,7 +50,10 @@ func ListScripts(c *gin.Context) {
 }
 
 func GetScript(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, ok := ParseID(c, "id")
+	if !ok {
+		return
+	}
 	var script model.Script
 	if err := model.DB.Preload("Writer").Preload("Reviewer").First(&script, id).Error; err != nil {
 		response.FailNotFound(c, "剧本不存在")
@@ -123,7 +125,10 @@ type PublishTaskReq struct {
 }
 
 func PublishProductionTask(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, ok := ParseID(c, "id")
+	if !ok {
+		return
+	}
 	var script model.Script
 	if err := model.DB.First(&script, id).Error; err != nil {
 		response.FailNotFound(c, "剧本不存在")
@@ -170,7 +175,10 @@ func PublishProductionTask(c *gin.Context) {
 }
 
 func CreateScriptRemake(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, ok := ParseID(c, "id")
+	if !ok {
+		return
+	}
 	var script model.Script
 	if err := model.DB.First(&script, id).Error; err != nil {
 		response.FailNotFound(c, "剧本不存在")

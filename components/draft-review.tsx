@@ -224,7 +224,8 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
 }
 
-function useVideoThumbnail(url: string): string | null {
+function useVideoThumbnail(rawUrl: string): string | null {
+  const url = assetUrl(rawUrl) || rawUrl
   const [thumb, setThumb] = useState<string | null>(null)
   useEffect(() => {
     if (!url) return
@@ -310,7 +311,7 @@ function ImageGalleryModal({ images, initialIndex = 0, onClose }: { images: stri
       onClick={onClose}
     >
       <div className="relative max-w-[80vw] max-h-[80vh] flex flex-col items-center" onClick={(e) => e.stopPropagation()}>
-        <img src={images[idx]} alt={`预览 ${idx + 1}/${total}`} className="max-w-full max-h-[75vh] rounded-[8px] object-contain shadow-2xl" />
+        <img src={assetUrl(images[idx])} alt={`预览 ${idx + 1}/${total}`} className="max-w-full max-h-[75vh] rounded-[8px] object-contain shadow-2xl" />
         <button
           onClick={onClose}
           className="absolute -right-3 -top-3 flex h-7 w-7 items-center justify-center rounded-full bg-white shadow-md text-[#374151] hover:bg-[#f3f4f6] transition-colors"
@@ -484,7 +485,7 @@ function TaskInfoPanel({
                 className="inline-block cursor-pointer overflow-hidden rounded-[4px] border border-[#e5e7eb] hover:border-[#38c08f] transition-colors"
                 onClick={() => setPreviewGallery({ images: [row.coverImage], index: 0 })}
               >
-                <img src={row.coverImage} alt="封面图" className="h-[72px] w-[128px] object-cover" />
+                <img src={assetUrl(row.coverImage)} alt="封面图" className="h-[72px] w-[128px] object-cover" />
               </div>
             ) : (
               <p className="text-[12px] text-[#9ca3af]">暂无封面图</p>
@@ -504,7 +505,7 @@ function TaskInfoPanel({
                   className="cursor-pointer overflow-hidden rounded-[4px] border border-[#e5e7eb] hover:border-[#38c08f] transition-colors"
                   onClick={() => setPreviewGallery({ images: row.copyrightImages, index: i })}
                 >
-                  <img src={src} alt={`版权材料${i + 1}`} className="h-[58px] w-[86px] object-cover" />
+                  <img src={assetUrl(src)} alt={`版权材料${i + 1}`} className="h-[58px] w-[86px] object-cover" />
                 </div>
               ))}
             </div>
@@ -1820,8 +1821,12 @@ export default function DraftReview() {
                             type="button"
                             onClick={async () => {
                               try {
-                                const d = await comicReviewApi.detail(Number(row.id))
-                                setDetailRow(mapReviewTaskToRow(d))
+                                const [d, logs] = await Promise.all([
+                                  comicReviewApi.detail(Number(row.id)),
+                                  comicReviewApi.logs(Number(row.id)),
+                                ])
+                                const auditRecords = (Array.isArray(logs) ? logs : []).map(mapAuditLogToDraftRecord)
+                                setDetailRow({ ...mapReviewTaskToRow(d), auditRecords })
                               } catch (e: any) {
                                 toast.error(e?.message ?? "加载详情失败")
                               }

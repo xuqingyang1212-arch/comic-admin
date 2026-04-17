@@ -1,0 +1,35 @@
+"use client"
+
+import { cn } from "@/lib/utils"
+
+export interface FilterInputProps {
+  label: string
+  placeholder: string
+  value: string
+  onChange: (v: string) => void
+  width?: string
+}
+
+export function FilterInput({
+  label,
+  placeholder,
+  value,
+  onChange,
+  width = "w-[148px]",
+}: FilterInputProps) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="whitespace-nowrap text-[13px] text-[#374151]">{label}</span>
+      <input
+        type="text"
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={cn(
+          "h-[30px] rounded-[6px] border border-[#d1d5db] bg-white px-3 text-[13px] text-[#374151] placeholder-[#9ca3af] outline-none transition-colors focus:border-[#38c08f]",
+          width
+        )}
+      />
+    </div>
+  )
+}

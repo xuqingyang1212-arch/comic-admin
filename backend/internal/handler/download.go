@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -54,7 +53,10 @@ func ListDownloadTasks(c *gin.Context) {
 }
 
 func GetDownloadURL(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, ok := ParseID(c, "id")
+	if !ok {
+		return
+	}
 	var task model.DownloadTask
 	if err := model.DB.First(&task, id).Error; err != nil {
 		response.FailNotFound(c, "下载任务不存在")
@@ -93,7 +95,10 @@ func GetDownloadURL(c *gin.Context) {
 }
 
 func RetryDownloadTask(c *gin.Context) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, ok := ParseID(c, "id")
+	if !ok {
+		return
+	}
 	var task model.DownloadTask
 	if err := model.DB.First(&task, id).Error; err != nil {
 		response.FailNotFound(c, "下载任务不存在")
@@ -257,17 +262,14 @@ func addFileToZip(w *zip.Writer, zipName, localPath string) error {
 }
 
 func localPathFromURL(rawURL string) string {
-	// http://localhost:8080/uploads/videos/final/xxx.mp4 -> ./uploads/videos/final/xxx.mp4
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		if strings.HasPrefix(rawURL, "/uploads/") {
-			return "." + rawURL
-		}
-		return rawURL
+	// Extract the path portion from the URL
+	p := rawURL
+	if u, err := url.Parse(rawURL); err == nil {
+		p = u.Path
 	}
-	p := u.Path
+	// Strip the /uploads/ prefix and resolve against the configured storage directory
 	if strings.HasPrefix(p, "/uploads/") {
-		return "." + p
+		return filepath.Join(config.LocalUploadDir(), strings.TrimPrefix(p, "/uploads/"))
 	}
 	return p
 }
