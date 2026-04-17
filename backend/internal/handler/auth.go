@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"comic-admin/internal/consts"
 	"comic-admin/internal/middleware"
 	"comic-admin/internal/model"
 	"comic-admin/internal/pkg/response"
@@ -27,7 +28,7 @@ func AuthLogin(c *gin.Context) {
 		user = model.User{
 			Name:   req.Name,
 			Email:  req.Email,
-			Status: "启用",
+			Status: consts.UserStatusActive,
 		}
 		if err := model.DB.Create(&user).Error; err != nil {
 			response.FailServer(c, "创建用户失败")
@@ -35,7 +36,7 @@ func AuthLogin(c *gin.Context) {
 		}
 	}
 
-	if user.Status != "启用" {
+	if user.Status != consts.UserStatusActive {
 		response.Fail(c, 403, "账号已禁用")
 		return
 	}

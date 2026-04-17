@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"comic-admin/internal/consts"
 	"comic-admin/internal/middleware"
 	"comic-admin/internal/model"
 	"comic-admin/internal/pkg/pagination"
@@ -19,40 +20,21 @@ func ListComics(c *gin.Context) {
 	p := pagination.Parse(c)
 	db := model.DB.Model(&model.Comic{})
 
-	if v := strings.TrimSpace(c.Query("comicId")); v != "" {
-		db = db.Where("comic_id = ?", v)
+	db = ApplyExact(db, c, "comicId", "comic_id")
+	db = ApplyLike(db, c, "episodeName", "episode_name")
+	db = ApplyExact(db, c, "artStyle", "art_style")
+	db = ApplyExact(db, c, "visualEffect", "visual_effect")
+	db = ApplyExact(db, c, "aspectRatio", "aspect_ratio")
+	if v := TrimQuery(c, "writer"); v != "" {
+		db = WhereUserNameLike(db, "writer_id", v)
 	}
-	if v := strings.TrimSpace(c.Query("episodeName")); v != "" {
-		db = db.Where("episode_name LIKE ?", "%"+v+"%")
+	if v := TrimQuery(c, "producer"); v != "" {
+		db = WhereUserNameLike(db, "producer_id", v)
 	}
-	if v := c.Query("artStyle"); v != "" {
-		db = db.Where("art_style = ?", v)
-	}
-	if v := c.Query("visualEffect"); v != "" {
-		db = db.Where("visual_effect = ?", v)
-	}
-	if v := c.Query("aspectRatio"); v != "" {
-		db = db.Where("aspect_ratio = ?", v)
-	}
-	if v := strings.TrimSpace(c.Query("writer")); v != "" {
-		db = db.Where("writer_id IN (SELECT id FROM users WHERE name LIKE ?)", "%"+v+"%")
-	}
-	if v := strings.TrimSpace(c.Query("producer")); v != "" {
-		db = db.Where("producer_id IN (SELECT id FROM users WHERE name LIKE ?)", "%"+v+"%")
-	}
-	if v := c.Query("startDate"); v != "" {
-		db = db.Where("created_at >= ?", v)
-	}
-	if v := c.Query("endDate"); v != "" {
-		db = db.Where("created_at <= ?", v+" 23:59:59")
-	}
-
-	var total int64
-	db.Count(&total)
+	db = ApplyDateRange(db, c, "created_at", "startDate", "endDate")
 
 	var comics []model.Comic
-	db.Preload("Writer").Preload("Producer").
-		Order("created_at DESC").Scopes(pagination.Paginate(p)).Find(&comics)
+	total, _ := pagination.CountAndFind(db, p, "created_at DESC", &comics, "Writer", "Producer")
 
 	scriptIDs := make([]int64, 0, len(comics))
 	for _, co := range comics {
@@ -119,7 +101,7 @@ func CreateDownloadTask(c *gin.Context) {
 	// Check if unexpired completed task exists
 	var existing model.DownloadTask
 	hasExisting := model.DB.Where("comic_id = ? AND download_content = ? AND status = ? AND expires_at > ?",
-		id, req.DownloadContent, "已完成", time.Now()).First(&existing).Error == nil
+		id, req.DownloadContent, consts.DownloadStatusCompleted, time.Now()).First(&existing).Error == nil
 
 	if hasExisting && !req.Force {
 		response.OK(c, gin.H{"duplicate": true, "message": "下载中心已存在该下载任务，是否重新下载？"})
@@ -127,14 +109,14 @@ func CreateDownloadTask(c *gin.Context) {
 	}
 
 	if hasExisting {
-		model.DB.Model(&existing).Update("status", "已失效")
+		model.DB.Model(&existing).Update("status", consts.DownloadStatusExpired)
 	}
 
 	task := model.DownloadTask{
 		ComicID:         id,
 		ComicName:       comic.EpisodeName,
 		DownloadContent: req.DownloadContent,
-		Status:          "进行中",
+		Status:          consts.DownloadStatusInProgress,
 		CreatorID:       middleware.GetUserID(c),
 	}
 	model.DB.Create(&task)
@@ -168,7 +150,7 @@ func CreateRevision(c *gin.Context) {
 
 	var activeCnt int64
 	model.DB.Model(&model.ProductionTask{}).
-		Where("comic_id = ? AND task_type = ? AND task_progress NOT IN ?", id, "修改", []string{"已完成", "已取消"}).
+		Where("comic_id = ? AND task_type = ? AND task_progress NOT IN ?", id, consts.TaskTypeRevise, []string{consts.TaskProgressCompleted, consts.TaskProgressCancelled}).
 		Count(&activeCnt)
 	if activeCnt > 0 {
 		response.Fail(c, 400, "该漫剧已有进行中的修改任务")
@@ -195,8 +177,8 @@ func CreateRevision(c *gin.Context) {
 		VisualEffect:     comic.VisualEffect,
 		AspectRatio:      comic.AspectRatio,
 		ProductionRemark: productionRemark,
-		TaskType:         "修改",
-		TaskProgress:     "修改版制作中",
+		TaskType:         consts.TaskTypeRevise,
+		TaskProgress:     consts.TaskProgressRevision,
 		InitiatorID:      userID,
 		ProducerID:       &comic.ProducerID,
 		ReviewerID:       &userID,
@@ -209,8 +191,8 @@ func CreateRevision(c *gin.Context) {
 
 	model.DB.Create(&model.ReviewAuditLog{
 		ProductionTaskID: task.ID,
-		Action:           "发起成片修改",
-		StageType:        "修改版",
+		Action:           consts.ActionStartRevision,
+		StageType:        consts.StageRevision,
 		OperatorID:       userID,
 		OpinionSnapshot:  &snapshotStr,
 		CreatedAt:        time.Now(),
@@ -227,9 +209,9 @@ func seedRevisionDelivery(task *model.ProductionTask, comic *model.Comic) {
 	origFiles := make(map[string]*model.TaskDeliveryFile) // keyed by fileType+episodeNum
 	var origTask model.ProductionTask
 	if model.DB.Where("script_id = ? AND task_type = ? AND task_progress = ?",
-		comic.ScriptID, "制作", "已完成").Order("updated_at DESC").First(&origTask).Error == nil {
+		comic.ScriptID, consts.TaskTypeProduce, consts.TaskProgressCompleted).Order("updated_at DESC").First(&origTask).Error == nil {
 		var origDelivery model.TaskDelivery
-		if model.DB.Where("task_id = ? AND delivery_type = ?", origTask.ID, "终版").
+		if model.DB.Where("task_id = ? AND delivery_type = ?", origTask.ID, consts.StageFinal).
 			Preload("Files").First(&origDelivery).Error == nil {
 			for i := range origDelivery.Files {
 				f := &origDelivery.Files[i]
@@ -250,7 +232,7 @@ func seedRevisionDelivery(task *model.ProductionTask, comic *model.Comic) {
 
 	delivery := model.TaskDelivery{
 		TaskID:       task.ID,
-		DeliveryType: "修改版",
+		DeliveryType: consts.StageRevision,
 		EpisodeName:  comic.EpisodeName,
 		CoverURL:     comic.CoverURL,
 	}

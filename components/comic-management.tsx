@@ -6,10 +6,16 @@ import { Search, RotateCcw, ChevronDown, X, Download, ZoomIn, Play, Plus, Trash2
 import { cn } from "@/lib/utils"
 import { comicApi, assetUrl } from "@/lib/api"
 import { toast } from "@/lib/toast"
+import { useFilters } from "@/hooks/use-filters"
+import { usePagination } from "@/hooks/use-pagination"
 import { InlineVideoPlayer } from "@/components/video-thumbnail"
 import { ListPagination, type PageSizeOption } from "@/components/list-pagination"
 import { usePerm } from "@/components/admin-layout"
-import { FilterInput, SelectFilter, DateRangePicker } from "@/components/shared"
+import { FilterInput, SelectFilter, DateRangePicker, ImageGalleryModal, ConfirmDialog } from "@/components/shared"
+import { ART_STYLE_OPTIONS, VISUAL_EFFECT_OPTIONS, ASPECT_RATIO_OPTIONS } from "@/lib/constants"
+import { formatDateTime } from "@/lib/format"
+import { formatFileSize } from "@/lib/format"
+import { useVideoThumbnail } from "@/hooks/use-video-thumbnail"
 
 // ─── 类型定义 ──────────────────────────────────────────────────────────────────
 
@@ -59,12 +65,7 @@ interface FilterForm {
 
 // ─── API → 表格行映射 ─────────────────────────────────────────────────────────
 
-function formatComicCreatedAt(raw: string): string {
-  const d = new Date(raw)
-  if (Number.isNaN(d.getTime())) return raw
-  const p = (n: number) => String(n).padStart(2, "0")
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
-}
+const formatComicCreatedAt = formatDateTime
 
 function mapApiComicToRow(d: {
   id: number
@@ -147,23 +148,7 @@ const defaultFilters: FilterForm = {
 
 // ─── 枚举选项 ─────────────────────────────────────────────────────────────────
 
-const artStyleOptions = [
-  { label: "解说漫", value: "解说漫" },
-  { label: "动画漫", value: "动画漫" },
-  { label: "沙雕漫", value: "沙雕漫" },
-  { label: "仿真人剧", value: "仿真人剧" },
-]
 
-const visualEffectOptions = [
-  { label: "2D", value: "2D" },
-  { label: "3D", value: "3D" },
-  { label: "仿真人", value: "仿真人" },
-]
-
-const aspectRatioOptions = [
-  { label: "横屏16:9", value: "横屏16:9" },
-  { label: "竖屏9:16", value: "竖屏9:16" },
-]
 
 // ─── 状态样式 ─────────────────────────────────────────────────────────────────
 
@@ -176,42 +161,7 @@ const statusStyle: Record<string, { bg: string; text: string }> = {
 
 // ─── 视频缩略图 Hook ────────────────────────────────────────────────────────
 
-function useVideoThumbnail(url: string | undefined): string | null {
-  const [thumb, setThumb] = useState<string | null>(null)
-  useEffect(() => {
-    if (!url) return
-    let cancelled = false
-    function tryCapture(crossOrigin: boolean) {
-      const video = document.createElement("video")
-      if (crossOrigin) video.crossOrigin = "anonymous"
-      video.preload = "metadata"
-      video.muted = true
-      video.playsInline = true
-      video.onloadeddata = () => {
-        if (cancelled) return
-        try {
-          const canvas = document.createElement("canvas")
-          canvas.width = 160
-          canvas.height = 90
-          const ctx = canvas.getContext("2d")
-          if (ctx) { ctx.drawImage(video, 0, 0, 160, 90); setThumb(canvas.toDataURL("image/jpeg", 0.8)) }
-        } catch { if (crossOrigin && !cancelled) tryCapture(false) }
-      }
-      video.onerror = () => { if (crossOrigin && !cancelled) tryCapture(false) }
-      video.src = url
-      video.currentTime = 0.5
-    }
-    tryCapture(true)
-    return () => { cancelled = true }
-  }, [url])
-  return thumb
-}
 
-function formatFileSize(bytes: number): string {
-  if (bytes <= 0) return ""
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)}KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)}MB`
-}
 
 // ─── 视频条目组件 ───────────────────────────────────────────────────────────
 
@@ -273,60 +223,6 @@ function RealVideoEpisodeItem({ ep, url, fileSize, onPlay }: { ep: number; url: 
 
 // ─── 图片画廊 Modal ───────────────────────────────────────────────────────────
 
-function ImageGalleryModal({ images, initialIndex = 0, onClose }: { images: string[]; initialIndex?: number; onClose: () => void }) {
-  const [idx, setIdx] = useState(initialIndex)
-  const total = images.length
-  const hasPrev = idx > 0
-  const hasNext = idx < total - 1
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose()
-      if (e.key === "ArrowLeft" && hasPrev) setIdx((i) => i - 1)
-      if (e.key === "ArrowRight" && hasNext) setIdx((i) => i + 1)
-    }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [onClose, hasPrev, hasNext])
-
-  return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70" onClick={onClose}>
-      <div className="relative max-w-[80vw] max-h-[80vh] flex flex-col items-center" onClick={(e) => e.stopPropagation()}>
-        <img src={images[idx]} alt={`预览 ${idx + 1}/${total}`} className="max-w-full max-h-[75vh] rounded-[8px] object-contain shadow-2xl" />
-        <button
-          onClick={onClose}
-          className="absolute -right-3 -top-3 flex h-7 w-7 items-center justify-center rounded-full bg-white shadow-md text-[#374151] hover:bg-[#f3f4f6] transition-colors"
-        >
-          <X size={14} />
-        </button>
-
-        {total > 1 && (
-          <>
-            {hasPrev && (
-              <button
-                onClick={() => setIdx((i) => i - 1)}
-                className="absolute left-[-48px] top-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center rounded-full bg-white/90 shadow-lg text-[#374151] hover:bg-white transition-colors"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M15 18l-6-6 6-6"/></svg>
-              </button>
-            )}
-            {hasNext && (
-              <button
-                onClick={() => setIdx((i) => i + 1)}
-                className="absolute right-[-48px] top-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center rounded-full bg-white/90 shadow-lg text-[#374151] hover:bg-white transition-colors"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M9 18l6-6-6-6"/></svg>
-              </button>
-            )}
-            <div className="mt-3 rounded-full bg-black/50 px-3 py-1">
-              <span className="text-[12px] text-white/90">{idx + 1} / {total}</span>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  )
-}
 
 // ─── 视频列表面板 ────────────────────────────────────────────────────────────
 
@@ -532,7 +428,7 @@ function ComicDetailDrawer({
         if (!cancelled) setDetailRow(mapApiComicToRow(d))
       })
       .catch((e) => {
-        if (!cancelled) toast.error(e instanceof Error ? e.message : "加载详情失败")
+        if (!cancelled) toast.errorFrom(e, "加载详情失败")
       })
     return () => {
       cancelled = true
@@ -648,7 +544,7 @@ function DownloadMenu({ row }: { row: ComicRow }) {
       }
       toast.success(res?.message ?? "下载任务已创建，请到下载中心查看")
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "下载失败")
+      toast.errorFrom(e, "下载失败")
     }
   }
 
@@ -681,37 +577,15 @@ function DownloadMenu({ row }: { row: ComicRow }) {
           ))}
         </div>
       )}
-      {confirm && createPortal(
-        <>
-          <div className="fixed inset-0 z-[200] bg-black/20" onClick={() => setConfirm(null)} />
-          <div className="fixed inset-0 z-[201] flex items-center justify-center">
-            <div className="w-[360px] rounded-[10px] bg-white shadow-2xl">
-              <div className="px-6 pt-5 pb-2">
-                <p className="text-[15px] font-semibold text-[#111827]">提示</p>
-              </div>
-              <div className="px-6 py-3">
-                <p className="text-[13px] leading-relaxed text-[#374151]">
-                  下载中心已存在该【{confirm.label}】的下载任务，是否重新打包下载？
-                </p>
-              </div>
-              <div className="flex justify-end gap-2 border-t border-[#f3f4f6] px-6 py-3">
-                <button
-                  onClick={() => setConfirm(null)}
-                  className="rounded-[6px] border border-[#d1d5db] bg-white px-4 py-1.5 text-[13px] text-[#374151] hover:bg-[#f5f6f7] transition-colors"
-                >
-                  取消
-                </button>
-                <button
-                  onClick={() => { const c = confirm.content; setConfirm(null); void doDownload(c, true) }}
-                  className="rounded-[6px] bg-[#38c08f] px-4 py-1.5 text-[13px] font-medium text-white hover:bg-[#2da87a] transition-colors"
-                >
-                  重新下载
-                </button>
-              </div>
-            </div>
-          </div>
-        </>,
-        document.body
+      {confirm && (
+        <ConfirmDialog
+          title="提示"
+          message={<>下载中心已存在该【{confirm.label}】的下载任务，是否重新打包下载？</>}
+          confirmLabel="重新下载"
+          zIndex={200}
+          onConfirm={() => { const c = confirm.content; setConfirm(null); void doDownload(c, true) }}
+          onCancel={() => setConfirm(null)}
+        />
       )}
     </div>
   )
@@ -941,7 +815,7 @@ function RequestChangeDrawer({ row, onClose }: { row: ComicRow; onClose: () => v
       setSubmitted(true)
       setTimeout(() => onClose(), 1200)
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "发起修改失败")
+      toast.errorFrom(e, "发起修改失败")
     }
   }
 
@@ -1211,12 +1085,8 @@ export default function ComicManagement() {
   const canDownload = usePerm("resource.comic.download")
   const canRevise = usePerm("resource.comic.revise")
 
-  const [draftFilters, setDraftFilters] = useState<FilterForm>(defaultFilters)
-  // 已提交筛选态（点击查询后同步）
-  const [activeFilters, setActiveFilters] = useState<FilterForm>(defaultFilters)
-
-  const [currentPage, setCurrentPage] = useState(1)
-  const [pageSize, setPageSize] = useState<PageSizeOption>(10)
+  const { draft: draftFilters, active: activeFilters, update: updateDraft, apply: applyFilters, reset: resetFilters } = useFilters(defaultFilters)
+  const { page: currentPage, pageSize, setPage: setCurrentPage, resetPage, paginationProps } = usePagination()
   const [detailRow, setDetailRow] = useState<ComicRow | null>(null)
   const [changeRow, setChangeRow] = useState<ComicRow | null>(null)
   const [previewImg, setPreviewImg] = useState<{ src: string; alt: string } | null>(null)
@@ -1253,18 +1123,13 @@ export default function ComicManagement() {
   }, [fetchComics])
 
   function handleQuery() {
-    setActiveFilters({ ...draftFilters })
-    setCurrentPage(1)
+    applyFilters()
+    resetPage()
   }
 
   function handleReset() {
-    setDraftFilters(defaultFilters)
-    setActiveFilters(defaultFilters)
-    setCurrentPage(1)
-  }
-
-  function updateDraft<K extends keyof FilterForm>(key: K, value: FilterForm[K]) {
-    setDraftFilters((prev) => ({ ...prev, [key]: value }))
+    resetFilters()
+    resetPage()
   }
 
   return (
@@ -1277,9 +1142,9 @@ export default function ComicManagement() {
             <FilterInput label="漫剧ID" placeholder="请输入漫剧ID" value={draftFilters.comicId} onChange={(v) => updateDraft("comicId", v)} width="w-[160px]" />
             <FilterInput label="剧集名称" placeholder="请输入剧集名称" value={draftFilters.comicName} onChange={(v) => updateDraft("comicName", v)} width="w-[148px]" />
             <FilterInput label="剧本ID" placeholder="请输入剧本ID" value={draftFilters.scriptId} onChange={(v) => updateDraft("scriptId", v)} width="w-[160px]" />
-            <SelectFilter label="画风类型" value={draftFilters.artStyle} onChange={(v) => updateDraft("artStyle", v)} options={artStyleOptions} width="w-[110px]" />
-            <SelectFilter label="视觉效果" value={draftFilters.visualEffect} onChange={(v) => updateDraft("visualEffect", v)} options={visualEffectOptions} width="w-[90px]" />
-            <SelectFilter label="画面比例" value={draftFilters.aspectRatio} onChange={(v) => updateDraft("aspectRatio", v)} options={aspectRatioOptions} width="w-[110px]" />
+            <SelectFilter label="画风类型" value={draftFilters.artStyle} onChange={(v) => updateDraft("artStyle", v)} options={ART_STYLE_OPTIONS} width="w-[110px]" />
+            <SelectFilter label="视觉效果" value={draftFilters.visualEffect} onChange={(v) => updateDraft("visualEffect", v)} options={VISUAL_EFFECT_OPTIONS} width="w-[90px]" />
+            <SelectFilter label="画面比例" value={draftFilters.aspectRatio} onChange={(v) => updateDraft("aspectRatio", v)} options={ASPECT_RATIO_OPTIONS} width="w-[110px]" />
             <FilterInput label="编剧" placeholder="请输入编剧" value={draftFilters.writer} onChange={(v) => updateDraft("writer", v)} width="w-[120px]" />
             <FilterInput label="制作员" placeholder="请输入制作员" value={draftFilters.producer} onChange={(v) => updateDraft("producer", v)} width="w-[120px]" />
             <div className="flex items-center gap-1.5">
@@ -1458,13 +1323,7 @@ export default function ComicManagement() {
 
           {/* 分页 */}
           <div className="shrink-0">
-            <ListPagination
-              total={total}
-              currentPage={currentPage}
-              pageSize={pageSize}
-              onPageChange={(p) => setCurrentPage(p)}
-              onPageSizeChange={(s) => { setPageSize(s); setCurrentPage(1) }}
-            />
+            <ListPagination total={total} {...paginationProps} />
           </div>
         </div>
       </div>

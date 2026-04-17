@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"comic-admin/internal/consts"
 	"comic-admin/internal/middleware"
 	"comic-admin/internal/model"
 	"comic-admin/internal/pkg/pagination"
@@ -17,45 +18,25 @@ func ListProductionTaskHall(c *gin.Context) {
 	p := pagination.Parse(c)
 	db := model.DB.Model(&model.ProductionTask{})
 
-	if v := strings.TrimSpace(c.Query("taskName")); v != "" {
-		db = db.Where("task_name LIKE ?", "%"+v+"%")
-	}
-	if v := strings.TrimSpace(c.Query("scriptId")); v != "" {
+	db = ApplyLike(db, c, "taskName", "task_name")
+	if v := TrimQuery(c, "scriptId"); v != "" {
 		db = db.Where("script_id IN (SELECT id FROM scripts WHERE script_id = ?)", v)
 	}
-	if v := c.Query("taskType"); v != "" {
-		db = db.Where("task_type = ?", v)
+	db = ApplyExact(db, c, "taskType", "task_type")
+	db = ApplyExact(db, c, "taskProgress", "task_progress")
+	db = ApplyExact(db, c, "artStyle", "art_style")
+	db = ApplyExact(db, c, "visualEffect", "visual_effect")
+	db = ApplyExact(db, c, "aspectRatio", "aspect_ratio")
+	if v := TrimQuery(c, "initiator"); v != "" {
+		db = WhereUserNameLike(db, "initiator_id", v)
 	}
-	if v := c.Query("taskProgress"); v != "" {
-		db = db.Where("task_progress = ?", v)
+	if v := TrimQuery(c, "producer"); v != "" {
+		db = WhereUserNameLike(db, "producer_id", v)
 	}
-	if v := c.Query("artStyle"); v != "" {
-		db = db.Where("art_style = ?", v)
-	}
-	if v := c.Query("visualEffect"); v != "" {
-		db = db.Where("visual_effect = ?", v)
-	}
-	if v := c.Query("aspectRatio"); v != "" {
-		db = db.Where("aspect_ratio = ?", v)
-	}
-	if v := strings.TrimSpace(c.Query("initiator")); v != "" {
-		db = db.Where("initiator_id IN (SELECT id FROM users WHERE name LIKE ?)", "%"+v+"%")
-	}
-	if v := strings.TrimSpace(c.Query("producer")); v != "" {
-		db = db.Where("producer_id IN (SELECT id FROM users WHERE name LIKE ?)", "%"+v+"%")
-	}
-	if v := c.Query("startDate"); v != "" {
-		db = db.Where("publish_time >= ?", v)
-	}
-	if v := c.Query("endDate"); v != "" {
-		db = db.Where("publish_time <= ?", v+" 23:59:59")
-	}
-
-	var total int64
-	db.Count(&total)
+	db = ApplyDateRange(db, c, "publish_time", "startDate", "endDate")
 
 	var tasks []model.ProductionTask
-	db.Preload("Initiator").Preload("Producer").Order("publish_time DESC").Scopes(pagination.Paginate(p)).Find(&tasks)
+	total, _ := pagination.CountAndFind(db, p, "publish_time DESC", &tasks, "Initiator", "Producer")
 
 	attachScriptsToTasks(tasks)
 	response.OKPage(c, total, tasks)
@@ -66,24 +47,15 @@ func ListProductionTaskMine(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	db := model.DB.Model(&model.ProductionTask{}).Where("producer_id = ?", userID)
 
-	if v := strings.TrimSpace(c.Query("taskName")); v != "" {
-		db = db.Where("task_name LIKE ?", "%"+v+"%")
+	db = ApplyLike(db, c, "taskName", "task_name")
+	db = ApplyExact(db, c, "taskType", "task_type")
+	db = ApplyExact(db, c, "taskProgress", "task_progress")
+	if v := TrimQuery(c, "reviewer"); v != "" {
+		db = WhereUserNameLike(db, "reviewer_id", v)
 	}
-	if v := c.Query("taskType"); v != "" {
-		db = db.Where("task_type = ?", v)
-	}
-	if v := c.Query("taskProgress"); v != "" {
-		db = db.Where("task_progress = ?", v)
-	}
-	if v := strings.TrimSpace(c.Query("reviewer")); v != "" {
-		db = db.Where("reviewer_id IN (SELECT id FROM users WHERE name LIKE ?)", "%"+v+"%")
-	}
-
-	var total int64
-	db.Count(&total)
 
 	var tasks []model.ProductionTask
-	db.Order("publish_time DESC").Preload("Reviewer").Scopes(pagination.Paginate(p)).Find(&tasks)
+	total, _ := pagination.CountAndFind(db, p, "publish_time DESC", &tasks, "Reviewer")
 
 	attachScriptsToTasks(tasks)
 	for i := range tasks {
@@ -137,7 +109,7 @@ func GetProductionTask(c *gin.Context) {
 
 func attachReviewEpisodeName(task *model.ProductionTask) {
 	var rt model.ReviewTask
-	if model.DB.Where("production_task_id = ? AND review_status = ?", task.ID, "驳回修改").
+	if model.DB.Where("production_task_id = ? AND review_status = ?", task.ID, consts.ReviewStatusRejected).
 		Order("created_at DESC").First(&rt).Error == nil && rt.EpisodeName != "" {
 		task.ReviewEpisodeName = rt.EpisodeName
 	}
@@ -154,14 +126,14 @@ func ClaimProductionTask(c *gin.Context) {
 		return
 	}
 
-	if task.TaskProgress != "待认领" {
+	if task.TaskProgress != consts.TaskProgressPending {
 		response.Fail(c, 400, "当前状态不可领取")
 		return
 	}
 
 	userID := middleware.GetUserID(c)
-	res := model.DB.Model(&task).Where("task_progress = ?", "待认领").Updates(map[string]any{
-		"task_progress": "初版制作中",
+	res := model.DB.Model(&task).Where("task_progress = ?", consts.TaskProgressPending).Updates(map[string]any{
+		"task_progress": consts.TaskProgressFirstDraft,
 		"producer_id":   userID,
 	})
 	if res.RowsAffected == 0 {
@@ -171,8 +143,8 @@ func ClaimProductionTask(c *gin.Context) {
 
 	model.DB.Create(&model.ReviewAuditLog{
 		ProductionTaskID: id,
-		Action:           "领取任务",
-		StageType:        "初版",
+		Action:           consts.ActionClaimTask,
+		StageType:        consts.StageFirst,
 		OperatorID:       userID,
 		CreatedAt:        time.Now(),
 	})
@@ -191,21 +163,21 @@ func CancelProductionTask(c *gin.Context) {
 		return
 	}
 
-	if task.TaskProgress == "已完成" || task.TaskProgress == "已取消" {
+	if task.TaskProgress == consts.TaskProgressCompleted || task.TaskProgress == consts.TaskProgressCancelled {
 		response.Fail(c, 400, "当前状态不可取消")
 		return
 	}
 
 	oldProgress := task.TaskProgress
-	res := model.DB.Model(&task).Where("task_progress NOT IN ?", []string{"已完成", "已取消"}).Update("task_progress", "已取消")
+	res := model.DB.Model(&task).Where("task_progress NOT IN ?", []string{consts.TaskProgressCompleted, consts.TaskProgressCancelled}).Update("task_progress", consts.TaskProgressCancelled)
 	if res.RowsAffected == 0 {
 		response.Fail(c, 400, "该任务已被处理，请勿重复操作")
 		return
 	}
 
 	// Cancel related review tasks
-	model.DB.Model(&model.ReviewTask{}).Where("production_task_id = ? AND review_status = ?", id, "审核中").
-		Update("review_status", "已取消")
+	model.DB.Model(&model.ReviewTask{}).Where("production_task_id = ? AND review_status = ?", id, consts.ReviewStatusAuditing).
+		Update("review_status", consts.TaskProgressCancelled)
 
 	userID := middleware.GetUserID(c)
 	now := time.Now()
@@ -218,11 +190,11 @@ func CancelProductionTask(c *gin.Context) {
 
 	if len(existingStages) == 0 {
 		// Fallback: determine from task progress
-		st := "初版"
-		if strings.Contains(oldProgress, "终版") {
-			st = "终版"
-		} else if strings.Contains(oldProgress, "修改版") {
-			st = "修改版"
+		st := consts.StageFirst
+		if strings.Contains(oldProgress, consts.StageFinal) {
+			st = consts.StageFinal
+		} else if strings.Contains(oldProgress, consts.StageRevision) {
+			st = consts.StageRevision
 		}
 		existingStages = []string{st}
 	}
@@ -230,7 +202,7 @@ func CancelProductionTask(c *gin.Context) {
 	for _, st := range existingStages {
 		model.DB.Create(&model.ReviewAuditLog{
 			ProductionTaskID: id,
-			Action:           "已取消",
+			Action:           consts.ActionCancelTask,
 			StageType:        st,
 			OperatorID:       userID,
 			CreatedAt:        now,
@@ -299,51 +271,26 @@ func SubmitDelivery(c *gin.Context) {
 		return
 	}
 
-	// Remove old deliveries of the same type (auto-save drafts etc.)
-	var oldDeliveryIDs []int64
-	model.DB.Model(&model.TaskDelivery{}).Where("task_id = ? AND delivery_type = ?", id, req.DeliveryType).Pluck("id", &oldDeliveryIDs)
-	if len(oldDeliveryIDs) > 0 {
-		model.DB.Where("delivery_id IN ?", oldDeliveryIDs).Delete(&model.TaskDeliveryFile{})
-		model.DB.Where("id IN ?", oldDeliveryIDs).Delete(&model.TaskDelivery{})
-	}
-
-	delivery := model.TaskDelivery{
-		TaskID:       id,
-		DeliveryType: req.DeliveryType,
-		EpisodeName:  req.EpisodeName,
-		CoverURL:     req.CoverURL,
-	}
-	model.DB.Create(&delivery)
-
-	for _, f := range req.Files {
-		model.DB.Create(&model.TaskDeliveryFile{
-			DeliveryID: delivery.ID,
-			FileType:   f.FileType,
-			EpisodeNum: f.EpisodeNum,
-			FileURL:    f.FileURL,
-			FileName:   f.FileName,
-			FileSize:   f.FileSize,
-		})
-	}
+	upsertDelivery(id, req.DeliveryType, req.EpisodeName, req.CoverURL, req.Files)
 
 	// Update task progress and create review task
 	var newProgress, expectedProgress, reviewType, stageType string
 	switch req.DeliveryType {
-	case "初版":
+	case consts.StageFirst:
 		newProgress = "初版审核中"
-		expectedProgress = "初版制作中"
+		expectedProgress = consts.TaskProgressFirstDraft
 		reviewType = "初版审核"
-		stageType = "初版"
-	case "终版":
+		stageType = consts.StageFirst
+	case consts.StageFinal:
 		newProgress = "终版审核中"
-		expectedProgress = "终版制作中"
+		expectedProgress = consts.TaskProgressFinalDraft
 		reviewType = "终版审核"
-		stageType = "终版"
-	case "修改版":
+		stageType = consts.StageFinal
+	case consts.StageRevision:
 		newProgress = "修改版审核中"
-		expectedProgress = "修改版制作中"
+		expectedProgress = consts.TaskProgressRevision
 		reviewType = "修改版审核"
-		stageType = "修改版"
+		stageType = consts.StageRevision
 	}
 
 	upRes := model.DB.Model(&task).Where("task_progress = ?", expectedProgress).Update("task_progress", newProgress)
@@ -355,7 +302,7 @@ func SubmitDelivery(c *gin.Context) {
 	// Reuse existing rejected review task of the same type, or create a new one
 	var reviewTask model.ReviewTask
 	existingFound := model.DB.Where("production_task_id = ? AND task_type = ? AND review_status = ?",
-		id, reviewType, "驳回修改").Order("created_at DESC").First(&reviewTask).Error == nil
+		id, reviewType, consts.ReviewStatusRejected).Order("created_at DESC").First(&reviewTask).Error == nil
 
 	epName := req.EpisodeName
 	if epName == "" && existingFound && reviewTask.EpisodeName != "" {
@@ -364,7 +311,7 @@ func SubmitDelivery(c *gin.Context) {
 
 	if existingFound {
 		// Reuse: update status back to 审核中, keep existing opinions
-		updates := map[string]any{"review_status": "审核中"}
+		updates := map[string]any{"review_status": consts.ReviewStatusAuditing}
 		if epName != "" {
 			updates["episode_name"] = epName
 		}
@@ -374,16 +321,16 @@ func SubmitDelivery(c *gin.Context) {
 		reviewTask = model.ReviewTask{
 			ProductionTaskID: id,
 			TaskType:         reviewType,
-			ReviewStatus:     "审核中",
+			ReviewStatus:     consts.ReviewStatusAuditing,
 			ReviewerID:       task.ReviewerID,
 			EpisodeName:      epName,
 		}
 		model.DB.Create(&reviewTask)
 
 		// For 修改版 first submission: seed opinions from "发起成片修改" audit log
-		if stageType == "修改版" {
+		if stageType == consts.StageRevision {
 			var initLog model.ReviewAuditLog
-			if model.DB.Where("production_task_id = ? AND action = ?", id, "发起成片修改").
+			if model.DB.Where("production_task_id = ? AND action = ?", id, consts.ActionStartRevision).
 				First(&initLog).Error == nil && initLog.OpinionSnapshot != nil {
 				var snapOps []struct {
 					Content string   `json:"content"`
@@ -425,8 +372,37 @@ type TaskDeliveryFileReq struct {
 	FileSize   int64  `json:"fileSize"`
 }
 
+// upsertDelivery replaces any existing delivery of the same type and creates a new one with files.
+func upsertDelivery(taskID int64, deliveryType, episodeName, coverURL string, files []TaskDeliveryFileReq) *model.TaskDelivery {
+	var oldIDs []int64
+	model.DB.Model(&model.TaskDelivery{}).Where("task_id = ? AND delivery_type = ?", taskID, deliveryType).Pluck("id", &oldIDs)
+	if len(oldIDs) > 0 {
+		model.DB.Where("delivery_id IN ?", oldIDs).Delete(&model.TaskDeliveryFile{})
+		model.DB.Where("id IN ?", oldIDs).Delete(&model.TaskDelivery{})
+	}
+
+	delivery := model.TaskDelivery{
+		TaskID:       taskID,
+		DeliveryType: deliveryType,
+		EpisodeName:  episodeName,
+		CoverURL:     coverURL,
+	}
+	model.DB.Create(&delivery)
+
+	for _, f := range files {
+		model.DB.Create(&model.TaskDeliveryFile{
+			DeliveryID: delivery.ID,
+			FileType:   f.FileType,
+			EpisodeNum: f.EpisodeNum,
+			FileURL:    f.FileURL,
+			FileName:   f.FileName,
+			FileSize:   f.FileSize,
+		})
+	}
+	return &delivery
+}
+
 func SaveDeliveryDraft(c *gin.Context) {
-	// Same as SubmitDelivery but without status change
 	id, ok := ParseID(c, "id")
 	if !ok {
 		return
@@ -443,32 +419,6 @@ func SaveDeliveryDraft(c *gin.Context) {
 		return
 	}
 
-	// Remove existing draft delivery of same type (cascade delete files first)
-	var oldDeliveryIDs []int64
-	model.DB.Model(&model.TaskDelivery{}).Where("task_id = ? AND delivery_type = ?", id, req.DeliveryType).Pluck("id", &oldDeliveryIDs)
-	if len(oldDeliveryIDs) > 0 {
-		model.DB.Where("delivery_id IN ?", oldDeliveryIDs).Delete(&model.TaskDeliveryFile{})
-		model.DB.Where("id IN ?", oldDeliveryIDs).Delete(&model.TaskDelivery{})
-	}
-
-	delivery := model.TaskDelivery{
-		TaskID:       id,
-		DeliveryType: req.DeliveryType,
-		EpisodeName:  req.EpisodeName,
-		CoverURL:     req.CoverURL,
-	}
-	model.DB.Create(&delivery)
-
-	for _, f := range req.Files {
-		model.DB.Create(&model.TaskDeliveryFile{
-			DeliveryID: delivery.ID,
-			FileType:   f.FileType,
-			EpisodeNum: f.EpisodeNum,
-			FileURL:    f.FileURL,
-			FileName:   f.FileName,
-			FileSize:   f.FileSize,
-		})
-	}
-
+	upsertDelivery(id, req.DeliveryType, req.EpisodeName, req.CoverURL, req.Files)
 	response.OKMsg(c, "保存成功")
 }

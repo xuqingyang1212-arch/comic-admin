@@ -5,8 +5,11 @@ import { Search, RotateCcw } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { downloadApi } from "@/lib/api"
 import { toast } from "@/lib/toast"
-import { ListPagination, type PageSizeOption } from "@/components/list-pagination"
+import { ListPagination } from "@/components/list-pagination"
 import { FilterInput, SelectFilter, DateRangePicker, StatusBadge } from "@/components/shared"
+import { formatDateTime } from "@/lib/format"
+import { useFilters } from "@/hooks/use-filters"
+import { usePagination } from "@/hooks/use-pagination"
 
 // ─────────────── Types ───────────────
 type DownloadContent = "有字幕视频" | "无字幕视频" | "提审材料"
@@ -47,21 +50,14 @@ const statusOptions: { label: string; value: string }[] = [
   { label: "失败",   value: "失败"   },
 ]
 
-function formatTaskCreatedAt(raw: string): string {
-  const d = new Date(raw)
-  if (Number.isNaN(d.getTime())) return raw
-  const p = (n: number) => String(n).padStart(2, "0")
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
-}
+const formatTaskCreatedAt = formatDateTime
 
 const downloadMock: DownloadTask[] = []
 
 // ─────────────── Main Component ───────────────
 export default function DownloadCenter() {
-  const [draftFilters, setDraftFilters]   = useState<FilterForm>(defaultFilters)
-  const [activeFilters, setActiveFilters] = useState<FilterForm>(defaultFilters)
-  const [currentPage, setCurrentPage]     = useState(1)
-  const [pageSize, setPageSize]           = useState<PageSizeOption>(10)
+  const { draft: draftFilters, active: activeFilters, update: updateDraft, apply: applyFilters, reset: resetFilters } = useFilters(defaultFilters)
+  const { page, pageSize, resetPage, paginationProps } = usePagination()
   const [data, setData]                   = useState<DownloadTask[]>([])
   const [total, setTotal]                 = useState(0)
   const [loading, setLoading]             = useState(false)
@@ -71,7 +67,7 @@ export default function DownloadCenter() {
     try {
       const f = activeFilters
       const params: Record<string, string | number> = {
-        page: currentPage,
+        page,
         pageSize,
       }
       const name = f.comicName.trim()
@@ -103,25 +99,20 @@ export default function DownloadCenter() {
     } finally {
       setLoading(false)
     }
-  }, [activeFilters, currentPage, pageSize])
+  }, [activeFilters, page, pageSize])
 
   useEffect(() => {
     void fetchTasks()
   }, [fetchTasks])
 
-  function updateDraft<K extends keyof FilterForm>(key: K, val: FilterForm[K]) {
-    setDraftFilters((prev) => ({ ...prev, [key]: val }))
-  }
-
   function handleQuery() {
-    setActiveFilters({ ...draftFilters, comicName: draftFilters.comicName.trim() })
-    setCurrentPage(1)
+    applyFilters()
+    resetPage()
   }
 
   function handleReset() {
-    setDraftFilters(defaultFilters)
-    setActiveFilters(defaultFilters)
-    setCurrentPage(1)
+    resetFilters()
+    resetPage()
   }
 
   async function handleRetry(id: string) {
@@ -129,7 +120,7 @@ export default function DownloadCenter() {
       await downloadApi.retry(Number(id))
       await fetchTasks()
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "重试失败")
+      toast.errorFrom(e, "重试失败")
     }
   }
 
@@ -138,7 +129,7 @@ export default function DownloadCenter() {
       const { url } = await downloadApi.getUrl(Number(row.id))
       window.open(url, "_blank", "noopener,noreferrer")
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "获取下载链接失败")
+      toast.errorFrom(e, "获取下载链接失败")
     }
   }
 
@@ -290,13 +281,7 @@ export default function DownloadCenter() {
 
         {/* ── 分页区 ── */}
         <div className="shrink-0">
-          <ListPagination
-            total={total}
-            currentPage={currentPage}
-            pageSize={pageSize}
-            onPageChange={(p) => setCurrentPage(p)}
-            onPageSizeChange={(s) => { setPageSize(s); setCurrentPage(1) }}
-          />
+          <ListPagination total={total} {...paginationProps} />
         </div>
       </div>
     </div>

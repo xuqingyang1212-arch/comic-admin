@@ -30,11 +30,19 @@ function remove(id: number) {
   notify()
 }
 
+function extractMessage(err: unknown, fallback: string): string {
+  if (err instanceof Error) return err.message || fallback
+  if (typeof err === "string") return err
+  if (err && typeof err === "object" && "message" in err) return String((err as { message: unknown }).message) || fallback
+  return fallback
+}
+
 export const toast = {
   success: (msg: string, duration?: number) => push("success", msg, duration),
   error: (msg: string, duration?: number) => push("error", msg, duration ?? 3500),
   info: (msg: string, duration?: number) => push("info", msg, duration),
   warning: (msg: string, duration?: number) => push("warning", msg, duration ?? 3000),
+  errorFrom: (err: unknown, fallback = "操作失败") => push("error", extractMessage(err, fallback), 3500),
   dismiss: remove,
 }
 

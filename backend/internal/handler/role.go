@@ -14,15 +14,10 @@ func ListRoles(c *gin.Context) {
 	p := pagination.Parse(c)
 	db := model.DB.Model(&model.Role{})
 
-	if v := strings.TrimSpace(c.Query("name")); v != "" {
-		db = db.Where("name LIKE ?", "%"+v+"%")
-	}
-
-	var total int64
-	db.Count(&total)
+	db = ApplyLike(db, c, "name", "name")
 
 	var roles []model.Role
-	db.Preload("Users").Preload("Permissions").Order("created_at DESC").Scopes(pagination.Paginate(p)).Find(&roles)
+	total, _ := pagination.CountAndFind(db, p, "created_at DESC", &roles, "Users", "Permissions")
 
 	response.OKPage(c, total, roles)
 }

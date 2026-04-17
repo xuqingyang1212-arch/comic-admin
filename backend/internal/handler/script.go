@@ -1,9 +1,9 @@
 package handler
 
 import (
-	"strings"
 	"time"
 
+	"comic-admin/internal/consts"
 	"comic-admin/internal/middleware"
 	"comic-admin/internal/model"
 	"comic-admin/internal/pkg/pagination"
@@ -16,33 +16,19 @@ func ListScripts(c *gin.Context) {
 	p := pagination.Parse(c)
 	db := model.DB.Model(&model.Script{})
 
-	if v := strings.TrimSpace(c.Query("scriptId")); v != "" {
-		db = db.Where("script_id = ?", v)
+	db = ApplyExact(db, c, "scriptId", "script_id")
+	db = ApplyLike(db, c, "scriptName", "script_name")
+	db = ApplyExact(db, c, "scriptType", "script_type")
+	if v := TrimQuery(c, "writer"); v != "" {
+		db = WhereUserNameLike(db, "writer_id", v)
 	}
-	if v := strings.TrimSpace(c.Query("scriptName")); v != "" {
-		db = db.Where("script_name LIKE ?", "%"+v+"%")
+	if v := TrimQuery(c, "reviewer"); v != "" {
+		db = WhereUserNameLike(db, "reviewer_id", v)
 	}
-	if v := c.Query("scriptType"); v != "" {
-		db = db.Where("script_type = ?", v)
-	}
-	if v := strings.TrimSpace(c.Query("writer")); v != "" {
-		db = db.Where("writer_id IN (SELECT id FROM users WHERE name LIKE ?)", "%"+v+"%")
-	}
-	if v := strings.TrimSpace(c.Query("reviewer")); v != "" {
-		db = db.Where("reviewer_id IN (SELECT id FROM users WHERE name LIKE ?)", "%"+v+"%")
-	}
-	if v := c.Query("startDate"); v != "" {
-		db = db.Where("created_at >= ?", v)
-	}
-	if v := c.Query("endDate"); v != "" {
-		db = db.Where("created_at <= ?", v+" 23:59:59")
-	}
-
-	var total int64
-	db.Count(&total)
+	db = ApplyDateRange(db, c, "created_at", "startDate", "endDate")
 
 	var scripts []model.Script
-	db.Preload("Writer").Preload("Reviewer").Order("created_at DESC").Scopes(pagination.Paginate(p)).Find(&scripts)
+	total, _ := pagination.CountAndFind(db, p, "created_at DESC", &scripts, "Writer", "Reviewer")
 
 	attachBooksToScripts(scripts)
 	attachOriginalScriptsToScripts(scripts)
@@ -141,15 +127,6 @@ func PublishProductionTask(c *gin.Context) {
 		return
 	}
 
-	var activeCnt int64
-	model.DB.Model(&model.ProductionTask{}).
-		Where("script_id = ? AND task_type = ? AND task_progress NOT IN ?", id, "制作", []string{"已完成", "已取消"}).
-		Count(&activeCnt)
-	if activeCnt > 0 {
-		response.Fail(c, 400, "该剧本已有进行中的制作任务")
-		return
-	}
-
 	userID := middleware.GetUserID(c)
 	task := model.ProductionTask{
 		TaskName:         script.ScriptName,
@@ -159,8 +136,8 @@ func PublishProductionTask(c *gin.Context) {
 		VisualEffect:     req.VisualEffect,
 		AspectRatio:      req.AspectRatio,
 		ProductionRemark: req.ProductionRemark,
-		TaskType:         "制作",
-		TaskProgress:     "待认领",
+		TaskType:         consts.TaskTypeProduce,
+		TaskProgress:     consts.TaskProgressPending,
 		InitiatorID:      userID,
 		ReviewerID:       &userID,
 		PublishTime:      time.Now(),
@@ -200,7 +177,7 @@ func CreateScriptRemake(c *gin.Context) {
 		BookID:           script.BookID,
 		ScriptType:       "多版本",
 		OriginalScriptID: &script.ID,
-		AuditStatus:      "待提审",
+		AuditStatus:      consts.DraftStatusDraft,
 		WriterID:         middleware.GetUserID(c),
 	}
 

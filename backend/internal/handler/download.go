@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"comic-admin/internal/config"
+	"comic-admin/internal/consts"
 	cosUtil "comic-admin/internal/pkg/cos"
 	"comic-admin/internal/middleware"
 	"comic-admin/internal/model"
@@ -27,27 +28,13 @@ func ListDownloadTasks(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	db := model.DB.Model(&model.DownloadTask{}).Where("creator_id = ?", userID)
 
-	if v := strings.TrimSpace(c.Query("comicName")); v != "" {
-		db = db.Where("comic_name LIKE ?", "%"+v+"%")
-	}
-	if v := c.Query("downloadContent"); v != "" {
-		db = db.Where("download_content = ?", v)
-	}
-	if v := c.Query("status"); v != "" {
-		db = db.Where("status = ?", v)
-	}
-	if v := c.Query("startDate"); v != "" {
-		db = db.Where("created_at >= ?", v)
-	}
-	if v := c.Query("endDate"); v != "" {
-		db = db.Where("created_at <= ?", v+" 23:59:59")
-	}
-
-	var total int64
-	db.Count(&total)
+	db = ApplyLike(db, c, "comicName", "comic_name")
+	db = ApplyExact(db, c, "downloadContent", "download_content")
+	db = ApplyExact(db, c, "status", "status")
+	db = ApplyDateRange(db, c, "created_at", "startDate", "endDate")
 
 	var tasks []model.DownloadTask
-	db.Order("created_at DESC").Scopes(pagination.Paginate(p)).Find(&tasks)
+	total, _ := pagination.CountAndFind(db, p, "created_at DESC", &tasks)
 
 	response.OKPage(c, total, tasks)
 }
@@ -63,13 +50,13 @@ func GetDownloadURL(c *gin.Context) {
 		return
 	}
 
-	if task.Status != "已完成" {
+	if task.Status != consts.DownloadStatusCompleted {
 		response.Fail(c, 400, "任务未完成")
 		return
 	}
 
 	if task.ExpiresAt != nil && task.ExpiresAt.Before(time.Now()) {
-		model.DB.Model(&task).Update("status", "已失效")
+		model.DB.Model(&task).Update("status", consts.DownloadStatusExpired)
 		response.Fail(c, 400, "下载链接已过期")
 		return
 	}
@@ -105,12 +92,12 @@ func RetryDownloadTask(c *gin.Context) {
 		return
 	}
 
-	if task.Status != "已失败" && task.Status != "失败" {
+	if task.Status != consts.DownloadStatusFailed && task.Status != consts.DownloadStatusFailedAlt {
 		response.Fail(c, 400, "仅失败任务可重试")
 		return
 	}
 
-	res := model.DB.Model(&task).Where("status IN ?", []string{"已失败", "失败"}).Update("status", "进行中")
+	res := model.DB.Model(&task).Where("status IN ?", []string{consts.DownloadStatusFailed, consts.DownloadStatusFailedAlt}).Update("status", consts.DownloadStatusInProgress)
 	if res.RowsAffected == 0 {
 		response.Fail(c, 400, "该任务已在处理中，请勿重复操作")
 		return
@@ -129,7 +116,7 @@ func packDownloadTask(taskID int64) {
 
 	var comic model.Comic
 	if model.DB.Preload("Episodes").First(&comic, task.ComicID).Error != nil {
-		model.DB.Model(&task).Update("status", "已失败")
+		model.DB.Model(&task).Update("status", consts.DownloadStatusFailed)
 		return
 	}
 
@@ -144,13 +131,13 @@ func packDownloadTask(taskID int64) {
 
 	if err := buildZip(zipPath, folderName, &comic, task.DownloadContent); err != nil {
 		log.Printf("[download] pack failed task=%d: %v", taskID, err)
-		model.DB.Model(&task).Update("status", "已失败")
+		model.DB.Model(&task).Update("status", consts.DownloadStatusFailed)
 		return
 	}
 
 	expires := now.Add(72 * time.Hour)
 	model.DB.Model(&task).Updates(map[string]any{
-		"status":     "已完成",
+		"status":     consts.DownloadStatusCompleted,
 		"file_url":   "/uploads/downloads/" + zipFileName,
 		"expires_at": expires,
 	})

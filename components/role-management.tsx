@@ -5,8 +5,11 @@ import { Search, RotateCcw, X, ChevronRight, ChevronDown } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { roleApi } from "@/lib/api"
 import { toast } from "@/lib/toast"
-import { ListPagination, type PageSizeOption } from "@/components/list-pagination"
+import { ListPagination } from "@/components/list-pagination"
+import { RightDrawer } from "@/components/shared"
 import { usePerm } from "@/components/admin-layout"
+import { useFilters } from "@/hooks/use-filters"
+import { usePagination } from "@/hooks/use-pagination"
 
 // ─────────────── Permission Tree ───────────────
 interface PermNode {
@@ -212,9 +215,7 @@ function RoleDrawer({
   }
 
   return (
-    <>
-      <div className="fixed inset-0 z-40 bg-black/20" onClick={onClose} />
-      <div className="fixed right-0 top-0 z-50 flex h-full w-[520px] flex-col bg-white shadow-2xl">
+    <RightDrawer width={520} zIndex={50} overlayOpacity={0.2} onClose={onClose}>
         <div className="flex shrink-0 items-center justify-between border-b border-[#e5e7eb] px-6 py-4">
           <span className="text-[15px] font-semibold text-[#111827]">
             {mode === "add" ? "新增角色" : "编辑角色"}
@@ -275,8 +276,7 @@ function RoleDrawer({
             确认
           </button>
         </div>
-      </div>
-    </>
+    </RightDrawer>
   )
 }
 
@@ -286,10 +286,8 @@ export default function RoleManagement() {
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
   const [permTree, setPermTree] = useState<PermNode[]>([])
-  const [draftFilters, setDraftFilters] = useState<FilterForm>(DEFAULT_FILTERS)
-  const [activeFilters, setActiveFilters] = useState<FilterForm>(DEFAULT_FILTERS)
-  const [currentPage, setCurrentPage] = useState(1)
-  const [pageSize, setPageSize] = useState<PageSizeOption>(10)
+  const { draft: draftFilters, active: activeFilters, update: updateDraft, apply: applyFilters, reset: resetFilters } = useFilters(DEFAULT_FILTERS)
+  const { page, pageSize, resetPage, paginationProps } = usePagination()
   const [drawerMode, setDrawerMode] = useState<"add" | "edit" | null>(null)
   const [editingRole, setEditingRole] = useState<Role | null>(null)
   const [listTick, setListTick] = useState(0)
@@ -301,7 +299,7 @@ export default function RoleManagement() {
     setLoading(true)
     try {
       const res = await roleApi.list({
-        page: currentPage,
+        page,
         pageSize,
         name: activeFilters.name.trim() || undefined,
       })
@@ -314,7 +312,7 @@ export default function RoleManagement() {
     } finally {
       setLoading(false)
     }
-  }, [currentPage, pageSize, activeFilters.name, listTick])
+  }, [page, pageSize, activeFilters.name, listTick])
 
   useEffect(() => {
     void fetchRoles()
@@ -328,14 +326,13 @@ export default function RoleManagement() {
   }, [])
 
   function handleQuery() {
-    setActiveFilters({ name: draftFilters.name.trim() })
-    setCurrentPage(1)
+    applyFilters()
+    resetPage()
     setListTick((t) => t + 1)
   }
   function handleReset() {
-    setDraftFilters(DEFAULT_FILTERS)
-    setActiveFilters(DEFAULT_FILTERS)
-    setCurrentPage(1)
+    resetFilters()
+    resetPage()
     setListTick((t) => t + 1)
   }
 
@@ -354,7 +351,7 @@ export default function RoleManagement() {
       toast.success("角色创建成功")
       await fetchRoles()
     } catch (e: any) {
-      toast.error(e?.message ?? "创建失败")
+      toast.errorFrom(e, "创建失败")
       throw e
     }
   }
@@ -370,7 +367,7 @@ export default function RoleManagement() {
       toast.success("角色更新成功")
       await fetchRoles()
     } catch (e: any) {
-      toast.error(e?.message ?? "更新失败")
+      toast.errorFrom(e, "更新失败")
       throw e
     }
   }
@@ -398,7 +395,7 @@ export default function RoleManagement() {
             <span className="whitespace-nowrap text-[13px] text-[#374151]">角色名称</span>
             <input
               type="text" placeholder="请输入角色名称" value={draftFilters.name}
-              onChange={(e) => setDraftFilters((prev) => ({ ...prev, name: e.target.value }))}
+              onChange={(e) => updateDraft("name", e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleQuery()}
               className="h-[30px] w-[180px] rounded-[6px] border border-[#d1d5db] bg-white px-3 text-[13px] text-[#374151] placeholder-[#9ca3af] outline-none transition-colors focus:border-[#38c08f]"
             />
@@ -466,8 +463,8 @@ export default function RoleManagement() {
                   <tr key={row.id}
                     className={cn("transition-colors hover:bg-[#f9fafb]", i < pageData.length - 1 && "border-b border-[#f3f4f6]")}>
                     <td className="px-4 py-3 text-[12.5px] font-medium text-[#111827] whitespace-nowrap">{row.name}</td>
-                    <td className="px-4 py-3 text-[12.5px] text-[#6b7280] max-w-[260px]">
-                      <span className="line-clamp-1">{row.remark || <span className="text-[#d1d5db]">—</span>}</span>
+                    <td className="px-4 py-3 text-[12.5px] text-[#6b7280] whitespace-nowrap">
+                      {row.remark || <span className="text-[#d1d5db]">—</span>}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">{userDisplay}</td>
                     <td className="px-4 py-3 whitespace-nowrap">
@@ -488,13 +485,7 @@ export default function RoleManagement() {
         </div>
 
         <div className="shrink-0">
-          <ListPagination
-            total={total}
-            currentPage={currentPage}
-            pageSize={pageSize}
-            onPageChange={(p) => setCurrentPage(p)}
-            onPageSizeChange={(s) => { setPageSize(s); setCurrentPage(1) }}
-          />
+          <ListPagination total={total} {...paginationProps} />
         </div>
       </div>
     </div>

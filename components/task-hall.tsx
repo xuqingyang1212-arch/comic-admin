@@ -2,122 +2,38 @@
 
 import { useState, useRef, useEffect, useCallback } from "react"
 import { Search, RotateCcw, ChevronDown, X, ZoomIn } from "lucide-react"
-import { FilterInput, SelectFilter, DateRangePicker } from "@/components/shared"
+import { FilterInput, SelectFilter, DateRangePicker, ImageGalleryModal } from "@/components/shared"
+import { ART_STYLE_OPTIONS, VISUAL_EFFECT_OPTIONS, ASPECT_RATIO_OPTIONS, TASK_TYPE_OPTIONS, TASK_HALL_PROGRESS_BY_TYPE } from "@/lib/constants"
+import { formatDateTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { productionTaskApi } from "@/lib/api"
 import { toast } from "@/lib/toast"
-import { ListPagination, type PageSizeOption } from "@/components/list-pagination"
+import { ListPagination } from "@/components/list-pagination"
+import { useFilters } from "@/hooks/use-filters"
+import { usePagination } from "@/hooks/use-pagination"
 import { usePerm } from "@/components/admin-layout"
 import {
   sharedParagraphs,
-  EditorNode,
   calcTotalWords,
   calcEpisodeIndex,
   calcSegmentWords,
-} from "@/components/book-management"
+  type EditorNode,
+} from "@/lib/script-editor"
 
-// ─── Image Gallery Modal ─────────────────────────────────────────────────────
-
-function ImageGalleryModal({ images, initialIndex = 0, onClose }: { images: string[]; initialIndex?: number; onClose: () => void }) {
-  const [idx, setIdx] = useState(initialIndex)
-  const total = images.length
-  const hasPrev = idx > 0
-  const hasNext = idx < total - 1
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose()
-      if (e.key === "ArrowLeft" && hasPrev) setIdx((i) => i - 1)
-      if (e.key === "ArrowRight" && hasNext) setIdx((i) => i + 1)
-    }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [onClose, hasPrev, hasNext])
-
-  return (
-    <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/70" onClick={onClose}>
-      <div className="relative max-w-[80vw] max-h-[80vh] flex flex-col items-center" onClick={(e) => e.stopPropagation()}>
-        <img src={images[idx]} alt={`预览 ${idx + 1}/${total}`} className="max-w-full max-h-[75vh] rounded-[8px] object-contain shadow-2xl" />
-        <button
-          onClick={onClose}
-          className="absolute -right-3 -top-3 flex h-7 w-7 items-center justify-center rounded-full bg-white shadow-md text-[#374151] hover:bg-[#f3f4f6] transition-colors"
-        >
-          <X size={14} />
-        </button>
-
-        {total > 1 && (
-          <>
-            {hasPrev && (
-              <button
-                onClick={() => setIdx((i) => i - 1)}
-                className="absolute left-[-48px] top-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center rounded-full bg-white/90 shadow-lg text-[#374151] hover:bg-white transition-colors"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M15 18l-6-6 6-6"/></svg>
-              </button>
-            )}
-            {hasNext && (
-              <button
-                onClick={() => setIdx((i) => i + 1)}
-                className="absolute right-[-48px] top-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center rounded-full bg-white/90 shadow-lg text-[#374151] hover:bg-white transition-colors"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M9 18l6-6-6-6"/></svg>
-              </button>
-            )}
-            <div className="mt-3 rounded-full bg-black/50 px-3 py-1">
-              <span className="text-[12px] text-white/90">{idx + 1} / {total}</span>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  )
-}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const artStyleOptions = [{ label: "解说漫", value: "解说漫" }, { label: "动画漫", value: "动画漫" }, { label: "沙雕漫", value: "沙雕漫" }, { label: "仿真人剧", value: "仿真人剧" }]
-const visualEffectOptions = [{ label: "2D", value: "2D" }, { label: "3D", value: "3D" }, { label: "仿真人", value: "仿真人" }]
-const aspectRatioOptions = [{ label: "横屏 16:9", value: "横屏 16:9" }, { label: "竖屏 9:16", value: "竖屏 9:16" }]
-
-const taskTypeOptions = [
-  { label: "制作", value: "制作" },
-  { label: "修改", value: "修改" },
-]
-const taskProgressByType: Record<string, { label: string; value: string }[]> = {
-  "制作": [
-    { label: "待认领", value: "待认领" },
-    { label: "初版制作中", value: "初版制作中" },
-    { label: "初版审核中", value: "初版审核中" },
-    { label: "终版制作中", value: "终版制作中" },
-    { label: "终版审核中", value: "终版审核中" },
-    { label: "已完成", value: "已完成" },
-    { label: "已取消", value: "已取消" },
-  ],
-  "修改": [
-    { label: "修改版制作中", value: "修改版制作中" },
-    { label: "修改版审核中", value: "修改版审核中" },
-    { label: "已完成", value: "已完成" },
-    { label: "已取消", value: "已取消" },
-  ],
-}
-
-const emptyFilters = {
+const defaultFilters = {
   scriptName: "",
   scriptId: "",
   artStyle: "",
   visualEffect: "",
   aspectRatio: "",
   publishTimeRange: [] as [string, string] | [],
-  taskType: "",
-  taskProgress: "",
-  initiator: "",
-  producer: "",
-}
-
-const defaultFilters = {
-  ...emptyFilters,
   taskType: "制作",
   taskProgress: "待认领",
+  initiator: "",
+  producer: "",
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -161,18 +77,7 @@ interface TaskRow {
 
 // ─── API mappers ─────────────────────────────────────────────────────────────
 
-function formatPublishTime(iso: string | undefined): string {
-  if (!iso) return ""
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, "0")
-  const day = String(d.getDate()).padStart(2, "0")
-  const h = String(d.getHours()).padStart(2, "0")
-  const min = String(d.getMinutes()).padStart(2, "0")
-  const s = String(d.getSeconds()).padStart(2, "0")
-  return `${y}-${m}-${day} ${h}:${min}:${s}`
-}
+const formatPublishTime = formatDateTime
 
 function mapActionToAuditStatus(action: string): AuditStatus {
   if (action === "已取消") return "取消任务"
@@ -402,7 +307,7 @@ function TaskHallAuditRecordDrawer({ row, onClose }: { row: TaskRow; onClose: ()
         </div>
       </div>
 
-      {previewGallery && <ImageGalleryModal images={previewGallery.images} initialIndex={previewGallery.index} onClose={() => setPreviewGallery(null)} />}
+      {previewGallery && <ImageGalleryModal images={previewGallery.images} initialIndex={previewGallery.index} onClose={() => setPreviewGallery(null)} zIndex={130} />}
     </>
   )
 }
@@ -649,7 +554,7 @@ function TaskScriptDetailDrawer({
           </div>
         </div>
       </div>
-      {previewGallery && <ImageGalleryModal images={previewGallery.images} initialIndex={previewGallery.index} onClose={() => setPreviewGallery(null)} />}
+      {previewGallery && <ImageGalleryModal images={previewGallery.images} initialIndex={previewGallery.index} onClose={() => setPreviewGallery(null)} zIndex={130} />}
     </>
   )
 }
@@ -727,10 +632,8 @@ export default function TaskHall() {
   const [data, setData] = useState<TaskRow[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
-  const [filters, setFilters] = useState({ ...defaultFilters })
-  const [applied, setApplied] = useState({ ...defaultFilters })
-  const [currentPage, setCurrentPage] = useState(1)
-  const [pageSize, setPageSize] = useState<PageSizeOption>(10)
+  const { draft: filters, active: applied, update: setField, apply: applyFilters, reset: resetFilters } = useFilters(defaultFilters)
+  const { page, pageSize, setPage, resetPage, paginationProps } = usePagination(10)
   const [confirmId, setConfirmId] = useState<number | null>(null)
   const [detailRow, setDetailRow] = useState<TaskRow | null>(null)
   const [auditDrawerRow, setAuditDrawerRow] = useState<TaskRow | null>(null)
@@ -741,33 +644,20 @@ export default function TaskHall() {
   const canCancel = usePerm("comicMake.hall.cancel")
   const canLog = usePerm("comicMake.hall.log")
 
-  function setField<K extends keyof typeof defaultFilters>(key: K, val: (typeof defaultFilters)[K]) {
-    setFilters((prev) => ({ ...prev, [key]: val }))
-  }
-
-  // 切换任务类型时，立即重置任务进度
   function handleTaskTypeChange(val: string) {
-    setFilters((prev) => ({ ...prev, taskType: val, taskProgress: "" }))
+    setField("taskType", val)
+    setField("taskProgress", "")
   }
 
-  function handleQuery() {
-    setApplied({
-      ...filters,
-      scriptName: filters.scriptName.trim(),
-      scriptId: filters.scriptId.trim(),
-      initiator: filters.initiator.trim(),
-      producer: filters.producer.trim(),
-    })
-    setCurrentPage(1)
-  }
-  function handleReset() { setFilters({ ...emptyFilters }); setApplied({ ...emptyFilters }); setCurrentPage(1) }
+  function handleQuery() { applyFilters(); resetPage() }
+  function handleReset() { resetFilters(); resetPage() }
 
   const fetchTasks = useCallback(async () => {
     setLoading(true)
     try {
       const a = applied
       const params: Record<string, string | number> = {
-        page: currentPage,
+        page,
         pageSize,
       }
       if (a.scriptName.trim()) params.taskName = a.scriptName.trim()
@@ -793,7 +683,7 @@ export default function TaskHall() {
     } finally {
       setLoading(false)
     }
-  }, [applied, currentPage, pageSize])
+  }, [applied, page, pageSize])
 
   useEffect(() => {
     void fetchTasks()
@@ -805,7 +695,7 @@ export default function TaskHall() {
       toast.success("领取成功")
       await fetchTasks()
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "领取失败")
+      toast.errorFrom(e, "领取失败")
     }
   }
 
@@ -816,7 +706,7 @@ export default function TaskHall() {
       toast.success("任务已取消")
       await fetchTasks()
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "取消失败")
+      toast.errorFrom(e, "取消失败")
     }
   }
 
@@ -829,7 +719,7 @@ export default function TaskHall() {
       const auditRecords = mapAuditLogsToRecords(logs ?? [])
       setDetailRow(mapDetailToTaskRow(detail, auditRecords))
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "加载详情失败")
+      toast.errorFrom(e, "加载详情失败")
     }
   }
 
@@ -839,7 +729,7 @@ export default function TaskHall() {
       const auditRecords = mapAuditLogsToRecords(logs ?? [])
       setAuditDrawerRow({ ...row, auditRecords })
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "加载审核记录失败")
+      toast.errorFrom(e, "加载审核记录失败")
     }
   }
 
@@ -862,7 +752,7 @@ export default function TaskHall() {
   ]
 
   const confirmRow = data.find((t) => t.id === confirmId)
-  const progressOptions = filters.taskType ? taskProgressByType[filters.taskType] ?? [] : []
+  const progressOptions = filters.taskType ? TASK_HALL_PROGRESS_BY_TYPE[filters.taskType] ?? [] : []
 
   return (
     <>
@@ -879,14 +769,14 @@ export default function TaskHall() {
               label="剧本ID" placeholder="请输入剧本ID"
               value={filters.scriptId} onChange={(v) => setField("scriptId", v)} width="w-[160px]"
             />
-            <SelectFilter label="画风类型" options={artStyleOptions} value={filters.artStyle} onChange={(v) => setField("artStyle", v)} width="w-[110px]" />
-            <SelectFilter label="视觉效果" options={visualEffectOptions} value={filters.visualEffect} onChange={(v) => setField("visualEffect", v)} width="w-[90px]" />
-            <SelectFilter label="画面比例" options={aspectRatioOptions} value={filters.aspectRatio} onChange={(v) => setField("aspectRatio", v)} width="w-[110px]" />
+            <SelectFilter label="画风类型" options={ART_STYLE_OPTIONS} value={filters.artStyle} onChange={(v) => setField("artStyle", v)} width="w-[110px]" />
+            <SelectFilter label="视觉效果" options={VISUAL_EFFECT_OPTIONS} value={filters.visualEffect} onChange={(v) => setField("visualEffect", v)} width="w-[90px]" />
+            <SelectFilter label="画面比例" options={ASPECT_RATIO_OPTIONS} value={filters.aspectRatio} onChange={(v) => setField("aspectRatio", v)} width="w-[110px]" />
             <div className="flex items-center gap-2">
               <span className="whitespace-nowrap text-[13px] text-[#374151]">发布时间</span>
               <DateRangePicker value={filters.publishTimeRange} onChange={(v) => setField("publishTimeRange", v)} />
             </div>
-            <SelectFilter label="任务类型" options={taskTypeOptions} value={filters.taskType} onChange={handleTaskTypeChange} width="w-[90px]" />
+            <SelectFilter label="任务类型" options={TASK_TYPE_OPTIONS} value={filters.taskType} onChange={handleTaskTypeChange} width="w-[90px]" />
             {/* 任务进度：联动禁用 */}
             <div className="flex items-center gap-2">
               <span className="whitespace-nowrap text-[13px] text-[#374151]">任务进度</span>
@@ -929,7 +819,7 @@ export default function TaskHall() {
 
         {/* Table */}
         <div className="flex-1 overflow-x-auto">
-          <table className="w-full border-collapse text-[13px]">
+          <table className="w-full min-w-[1400px] border-collapse text-[13px]">
             <thead>
               <tr className="bg-[#f9fafb]">
                 {columns.map(({ label, w }) => (
@@ -975,10 +865,10 @@ export default function TaskHall() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-[12.5px] text-[#4b5563] whitespace-nowrap">{row.aspectRatio}</td>
-                    <td className="px-4 py-3 text-[12.5px] text-[#6b7280]">
+                    <td className="px-4 py-3 text-[12.5px] text-[#6b7280] whitespace-nowrap">
                       {row.taskType === "修改" ? <span className="text-[#d1d5db]">--</span> : row.productionRemark ? (
                         <span
-                          className="block max-w-[200px] cursor-default truncate"
+                          className="cursor-default"
                           onMouseEnter={(e) => {
                             const rect = e.currentTarget.getBoundingClientRect()
                             setRemarkTip({ text: row.productionRemark, x: rect.left, y: rect.bottom + 4 })
@@ -1041,10 +931,7 @@ export default function TaskHall() {
         {/* Pagination */}
         <ListPagination
           total={total}
-          currentPage={currentPage}
-          pageSize={pageSize}
-          onPageChange={(p) => setCurrentPage(p)}
-          onPageSizeChange={(s) => { setPageSize(s); setCurrentPage(1) }}
+          {...paginationProps}
         />
       </div>
       {detailRow && (

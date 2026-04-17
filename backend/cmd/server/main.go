@@ -8,6 +8,7 @@ import (
 	"comic-admin/internal/handler"
 	"comic-admin/internal/model"
 	cosUtil "comic-admin/internal/pkg/cos"
+	"comic-admin/internal/service"
 )
 
 func main() {
@@ -19,6 +20,8 @@ func main() {
 	model.AutoMigrate()
 
 	cosUtil.Init()
+
+	handler.Svc = service.New(model.DB)
 
 	r := handler.SetupRouter(config.Global.Server.Mode)
 

@@ -7,14 +7,19 @@ import { cn } from "@/lib/utils"
 import { comicReviewApi, assetUrl } from "@/lib/api"
 import { toast } from "@/lib/toast"
 import { InlineVideoPlayer } from "@/components/video-thumbnail"
-import { ListPagination, type PageSizeOption } from "@/components/list-pagination"
+import { ListPagination } from "@/components/list-pagination"
+import { useFilters } from "@/hooks/use-filters"
+import { usePagination } from "@/hooks/use-pagination"
 import { usePerm } from "@/components/admin-layout"
+import { ImageGalleryModal } from "@/components/shared"
+import { formatFileSize, formatDateTime } from "@/lib/format"
+import { useVideoThumbnail } from "@/hooks/use-video-thumbnail"
 import {
-  EditorNode,
   calcTotalWords,
   calcEpisodeIndex,
   calcSegmentWords,
-} from "@/components/book-management"
+  type EditorNode,
+} from "@/lib/script-editor"
 
 // ─── 类型定义 ──────────────────────────────────────────────────────────────────
 
@@ -110,14 +115,6 @@ const defaultFilters = {
   producer: "",
   taskType: "",
   reviewStatus: "审核中",
-}
-
-const emptyFilters = {
-  scriptName: "",
-  scriptId: "",
-  producer: "",
-  taskType: "",
-  reviewStatus: "",
 }
 
 // ─── 状态色块 ──────────────────────────────────────────────────────────────────
@@ -218,38 +215,7 @@ function InfoRow({
 
 // ─── 可折叠视频条目 ────────────────────────────────────────────────────────────
 
-function formatFileSize(bytes: number): string {
-  if (bytes <= 0) return "—"
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)}KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
-}
 
-function useVideoThumbnail(rawUrl: string): string | null {
-  const url = assetUrl(rawUrl) || rawUrl
-  const [thumb, setThumb] = useState<string | null>(null)
-  useEffect(() => {
-    if (!url) return
-    const video = document.createElement("video")
-    video.crossOrigin = "anonymous"
-    video.preload = "metadata"
-    video.src = url
-    video.currentTime = 0.5
-    let revoked = false
-    video.onloadeddata = () => {
-      if (revoked) return
-      const canvas = document.createElement("canvas")
-      canvas.width = 160
-      canvas.height = 90
-      const ctx = canvas.getContext("2d")
-      if (ctx) {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-        setThumb(canvas.toDataURL("image/jpeg", 0.7))
-      }
-    }
-    return () => { revoked = true }
-  }, [url])
-  return thumb
-}
 
 function RealVideoEpisodeItem({
   file, onPlay,
@@ -289,63 +255,6 @@ function RealVideoEpisodeItem({
 
 // ─── 图片预览 Modal ──────────────────────────────────────────────────────────
 
-function ImageGalleryModal({ images, initialIndex = 0, onClose }: { images: string[]; initialIndex?: number; onClose: () => void }) {
-  const [idx, setIdx] = useState(initialIndex)
-  const total = images.length
-  const hasPrev = idx > 0
-  const hasNext = idx < total - 1
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose()
-      if (e.key === "ArrowLeft" && hasPrev) setIdx((i) => i - 1)
-      if (e.key === "ArrowRight" && hasNext) setIdx((i) => i + 1)
-    }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [onClose, hasPrev, hasNext])
-
-  return (
-    <div
-      className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70"
-      onClick={onClose}
-    >
-      <div className="relative max-w-[80vw] max-h-[80vh] flex flex-col items-center" onClick={(e) => e.stopPropagation()}>
-        <img src={assetUrl(images[idx])} alt={`预览 ${idx + 1}/${total}`} className="max-w-full max-h-[75vh] rounded-[8px] object-contain shadow-2xl" />
-        <button
-          onClick={onClose}
-          className="absolute -right-3 -top-3 flex h-7 w-7 items-center justify-center rounded-full bg-white shadow-md text-[#374151] hover:bg-[#f3f4f6] transition-colors"
-        >
-          <X size={14} />
-        </button>
-
-        {total > 1 && (
-          <>
-            {hasPrev && (
-              <button
-                onClick={() => setIdx((i) => i - 1)}
-                className="absolute left-[-48px] top-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center rounded-full bg-white/90 shadow-lg text-[#374151] hover:bg-white transition-colors"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M15 18l-6-6 6-6"/></svg>
-              </button>
-            )}
-            {hasNext && (
-              <button
-                onClick={() => setIdx((i) => i + 1)}
-                className="absolute right-[-48px] top-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center rounded-full bg-white/90 shadow-lg text-[#374151] hover:bg-white transition-colors"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M9 18l6-6-6-6"/></svg>
-              </button>
-            )}
-            <div className="mt-3 rounded-full bg-black/50 px-3 py-1">
-              <span className="text-[12px] text-white/90">{idx + 1} / {total}</span>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  )
-}
 
 // ─── 任务信息面板（初版：6字段；终版/修改版：9字段+封面图+版权材料）──────────
 
@@ -514,7 +423,7 @@ function TaskInfoPanel({
       )}
 
       {/* 图片预览 Modal */}
-      {previewGallery && <ImageGalleryModal images={previewGallery.images} initialIndex={previewGallery.index} onClose={() => setPreviewGallery(null)} />}
+      {previewGallery && <ImageGalleryModal images={previewGallery.images} initialIndex={previewGallery.index} onClose={() => setPreviewGallery(null)} resolveSrc={assetUrl} />}
     </div>
   )
 }
@@ -948,8 +857,8 @@ function ReviewActionDrawer({
   }
 
   function handleReject() {
-    if (!opinionRecords.some(r => r.text.trim())) {
-      setOpinionError("驳回修改时审核意见为必填项，请至少填写一条记录内容")
+    if (!opinionRecords.some(r => r.text.trim() || r.images.length > 0)) {
+      setOpinionError("驳回修改时审核意见为必填项，请至少填写文字或上传图片")
       return
     }
     setOpinionError("")
@@ -1143,7 +1052,7 @@ function ReviewActionDrawer({
       </div>
 
       {/* 图片画廊预览 */}
-      {previewGallery && <ImageGalleryModal images={previewGallery.images} initialIndex={previewGallery.index} onClose={() => setPreviewGallery(null)} />}
+      {previewGallery && <ImageGalleryModal images={previewGallery.images} initialIndex={previewGallery.index} onClose={() => setPreviewGallery(null)} resolveSrc={assetUrl} />}
     </>
   )
 }
@@ -1155,8 +1064,7 @@ function ReviewActionDrawer({
 // ─── 审核意见 - 记录类型 ──────────────────────────────────────────────────────
 
 function nowStr() {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`
+  return formatDateTime(new Date())
 }
 
 // ─── 单条审核记录卡片 ──────────────────────────────────────────────────────────
@@ -1519,7 +1427,7 @@ function ReviewRecordDrawer({
       </div>
 
       {/* 图片画廊预览 */}
-      {previewGallery && <ImageGalleryModal images={previewGallery.images} initialIndex={previewGallery.index} onClose={() => setPreviewGallery(null)} />}
+      {previewGallery && <ImageGalleryModal images={previewGallery.images} initialIndex={previewGallery.index} onClose={() => setPreviewGallery(null)} resolveSrc={assetUrl} />}
     </>
   )
 }
@@ -1529,13 +1437,7 @@ function ReviewRecordDrawer({
 
 const PLACEHOLDER_COVER = "https://placehold.co/320x180/f3f4f6/9ca3af?text=封面"
 
-function formatApiTime(iso: string | undefined): string {
-  if (!iso) return ""
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return String(iso)
-  const pad = (n: number) => String(n).padStart(2, "0")
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-}
+const formatApiTime = formatDateTime
 
 function mapOpinionsToRecords(opinions: unknown[] | undefined): AuditOpinionRecord[] {
   if (!opinions?.length) return []
@@ -1669,10 +1571,8 @@ export default function DraftReview() {
   const [data, setData] = useState<DraftReviewRow[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
-  const [filters, setFilters] = useState(defaultFilters)
-  const [applied, setApplied] = useState(defaultFilters)
-  const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState<PageSizeOption>(10)
+  const { draft: filters, active: applied, update: setField, apply: applyFilters, reset: resetFilters } = useFilters(defaultFilters)
+  const { page, pageSize, setPage, resetPage, paginationProps } = usePagination(10)
   const [detailRow, setDetailRow] = useState<DraftReviewRow | null>(null)
   const [reviewRow, setReviewRow] = useState<DraftReviewRow | null>(null)
   const [recordRow, setRecordRow] = useState<DraftReviewRow | null>(null)
@@ -1721,25 +1621,18 @@ export default function DraftReview() {
       toast.success(result === "审核通过" ? "审核通过" : "已驳回，请修改后重新提交")
       await fetchTasks()
     } catch (e: any) {
-      toast.error(e?.message ?? "审核失败")
+      toast.errorFrom(e, "审核失败")
     }
   }
 
   function handleQuery() {
-    setApplied({
-      scriptName: filters.scriptName.trim(),
-      scriptId: filters.scriptId.trim(),
-      producer: filters.producer.trim(),
-      taskType: filters.taskType,
-      reviewStatus: filters.reviewStatus,
-    })
-    setPage(1)
+    applyFilters()
+    resetPage()
   }
 
   function handleReset() {
-    setFilters(emptyFilters)
-    setApplied(emptyFilters)
-    setPage(1)
+    resetFilters()
+    resetPage()
   }
 
   const pageData = data
@@ -1757,28 +1650,28 @@ export default function DraftReview() {
           <div className="flex items-center gap-1.5">
             <span className="whitespace-nowrap text-[13px] text-[#374151]">任务名称</span>
             <div style={{ width: 148 }}>
-              <input type="text" value={filters.scriptName} onChange={(e) => setFilters((f) => ({ ...f, scriptName: e.target.value }))} onKeyDown={(e) => e.key === "Enter" && handleQuery()} placeholder="请输入任务名称" className={inputCls} />
+              <input type="text" value={filters.scriptName} onChange={(e) => setField("scriptName", e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleQuery()} placeholder="请输入任务名称" className={inputCls} />
             </div>
           </div>
           <div className="flex items-center gap-1.5">
             <span className="whitespace-nowrap text-[13px] text-[#374151]">剧本ID</span>
             <div style={{ width: 148 }}>
-              <input type="text" value={filters.scriptId} onChange={(e) => setFilters((f) => ({ ...f, scriptId: e.target.value }))} onKeyDown={(e) => e.key === "Enter" && handleQuery()} placeholder="请输入剧本ID" className={inputCls} />
+              <input type="text" value={filters.scriptId} onChange={(e) => setField("scriptId", e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleQuery()} placeholder="请输入剧本ID" className={inputCls} />
             </div>
           </div>
           <div className="flex items-center gap-1.5">
             <span className="whitespace-nowrap text-[13px] text-[#374151]">制作人</span>
             <div style={{ width: 120 }}>
-              <input type="text" value={filters.producer} onChange={(e) => setFilters((f) => ({ ...f, producer: e.target.value }))} onKeyDown={(e) => e.key === "Enter" && handleQuery()} placeholder="请输入制作人" className={inputCls} />
+              <input type="text" value={filters.producer} onChange={(e) => setField("producer", e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleQuery()} placeholder="请输入制作人" className={inputCls} />
             </div>
           </div>
           <div className="flex items-center gap-1.5">
             <span className="whitespace-nowrap text-[13px] text-[#374151]">任务类型</span>
-            <SelectFilter value={filters.taskType} onChange={(v) => setFilters((f) => ({ ...f, taskType: v }))} options={taskTypeOptions} placeholder="请选择任务类型" width={148} />
+            <SelectFilter value={filters.taskType} onChange={(v) => setField("taskType", v)} options={taskTypeOptions} placeholder="请选择任务类型" width={148} />
           </div>
           <div className="flex items-center gap-1.5">
             <span className="whitespace-nowrap text-[13px] text-[#374151]">审核状态</span>
-            <SelectFilter value={filters.reviewStatus} onChange={(v) => setFilters((f) => ({ ...f, reviewStatus: v }))} options={reviewStatusOptions} placeholder="请选择审核状态" width={148} />
+            <SelectFilter value={filters.reviewStatus} onChange={(v) => setField("reviewStatus", v)} options={reviewStatusOptions} placeholder="请选择审核状态" width={148} />
           </div>
           <div className="ml-auto flex items-center gap-2">
             <button onClick={handleQuery} className="flex h-[30px] items-center gap-1.5 rounded-[6px] bg-[#38c08f] px-4 text-[13px] font-medium text-white hover:bg-[#2da87a] transition-colors">
@@ -1815,7 +1708,7 @@ export default function DraftReview() {
                   const tStyle = taskTypeStyle[row.taskType] ?? { bg: "bg-[#f3f4f6]", text: "text-[#6b7280]" }
                   return (
                     <tr key={`draft-row-${row.id}`} className={cn("transition-colors hover:bg-[#f9fafb]", i < pageData.length - 1 && "border-b border-[#f3f4f6]")}>
-                      <td className="max-w-[160px] px-4 py-3">
+                      <td className="px-4 py-3 whitespace-nowrap">
                         {canDetail ? (
                           <button
                             type="button"
@@ -1828,21 +1721,20 @@ export default function DraftReview() {
                                 const auditRecords = (Array.isArray(logs) ? logs : []).map(mapAuditLogToDraftRecord)
                                 setDetailRow({ ...mapReviewTaskToRow(d), auditRecords })
                               } catch (e: any) {
-                                toast.error(e?.message ?? "加载详情失败")
+                                toast.errorFrom(e, "加载详情失败")
                               }
                             }}
-                            className="block truncate font-medium text-[#2563eb] hover:text-[#1d4ed8] hover:underline transition-colors text-left"
-                            title={row.scriptName}
+                            className="font-medium text-[#2563eb] hover:text-[#1d4ed8] hover:underline transition-colors text-left"
                           >
                             {row.scriptName}
                           </button>
                         ) : (
-                          <span className="block truncate font-medium text-[#111827] text-left" title={row.scriptName}>
+                          <span className="font-medium text-[#111827] text-left">
                             {row.scriptName}
                           </span>
                         )}
                       </td>
-                      <td className="px-4 py-3"><span className="font-mono text-[12px] text-[#6b7280]">{row.scriptId}</span></td>
+                      <td className="px-4 py-3 whitespace-nowrap"><span className="font-mono text-[12px] text-[#6b7280]">{row.scriptId}</span></td>
                       <td className="px-4 py-3 text-[#4b5563] whitespace-nowrap">{row.episodeCount}集</td>
                       <td className="px-4 py-3 text-[#4b5563] whitespace-nowrap">{row.producer}</td>
                       <td className="px-4 py-3 whitespace-nowrap">
@@ -1865,7 +1757,7 @@ export default function DraftReview() {
                                   const auditRecords = (Array.isArray(logs) ? logs : []).map(mapAuditLogToDraftRecord)
                                   setReviewRow({ ...mapReviewTaskToRow(d, { includeOpinions: true }), auditRecords })
                                 } catch (e: any) {
-                                  toast.error(e?.message ?? "加载审核数据失败")
+                                  toast.errorFrom(e, "加载审核数据失败")
                                 }
                               }}
                               className="rounded-[4px] border border-[#38c08f] px-2.5 py-1 text-[12px] font-medium text-[#38c08f] hover:bg-[#f0fdf4] transition-colors whitespace-nowrap"
@@ -1882,7 +1774,7 @@ export default function DraftReview() {
                                   const auditRecords = (Array.isArray(logs) ? logs : []).map(mapAuditLogToDraftRecord)
                                   setRecordRow({ ...row, auditRecords })
                                 } catch (e: any) {
-                                  toast.error(e?.message ?? "加载审核记录失败")
+                                  toast.errorFrom(e, "加载审核记录失败")
                                 }
                               }}
                               className="rounded-[4px] border border-[#2563eb] px-2.5 py-1 text-[12px] font-medium text-[#2563eb] hover:bg-[#eff6ff] transition-colors whitespace-nowrap"
@@ -1902,10 +1794,7 @@ export default function DraftReview() {
         <div className="shrink-0">
           <ListPagination
             total={total}
-            currentPage={page}
-            pageSize={pageSize}
-            onPageChange={setPage}
-            onPageSizeChange={(s) => { setPageSize(s); setPage(1) }}
+            {...paginationProps}
           />
         </div>
       </div>
@@ -1924,7 +1813,7 @@ export default function DraftReview() {
             })
             toast.success("已保存")
           } catch (e: any) {
-            toast.error(e?.message ?? "保存失败")
+            toast.errorFrom(e, "保存失败")
             throw e
           }
         }}

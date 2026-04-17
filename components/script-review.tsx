@@ -3,19 +3,22 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from "react"
 import { Search, RotateCcw, ChevronDown, CheckCircle, X, Bold, Underline, Strikethrough, Plus } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { SelectFilter } from "@/components/shared"
+import { SelectFilter, PublishTaskDrawer } from "@/components/shared"
+import { formatDateTime } from "@/lib/format"
 import { scriptAuditApi, scriptDraftApi, bookApi } from "@/lib/api"
 import { toast } from "@/lib/toast"
-import { ListPagination, type PageSizeOption } from "@/components/list-pagination"
+import { ListPagination } from "@/components/list-pagination"
+import { useFilters } from "@/hooks/use-filters"
+import { usePagination } from "@/hooks/use-pagination"
 import {
   sharedParagraphs,
   TRIAL_PARAGRAPH_INDEX,
-  EditorNode,
   calcTotalWords,
   calcEpisodeIndex,
   calcSegmentWords,
   buildInitialNodes,
-} from "@/components/book-management"
+  type EditorNode,
+} from "@/lib/script-editor"
 
 // ─── 类型 ──────────────────────────────────────────────────────────────────────
 
@@ -60,14 +63,17 @@ interface MyAuditRow {
   paidBreakpointEpisode: number | null
 }
 
+interface PublishInfo {
+  scriptDbId: number
+  displayScriptId: string
+  scriptName: string
+  episodeCount: number
+  paidEpisode: number | null
+}
+
 type ScriptType = ScriptRow["scriptType"]
 
-function formatAuditTime(iso: string | undefined): string {
-  if (!iso) return ""
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return String(iso)
-  return d.toLocaleString("zh-CN", { hour12: false }).replace(/\//g, "-")
-}
+const formatAuditTime = formatDateTime
 
 function mapAuditLogToNode(log: {
   createdAt?: string
@@ -159,19 +165,14 @@ const auditStatusOptions = [
   { label: "审核不通过", value: "审核不通过" },
 ]
 
-const emptyFilters = {
+const defaultFilters = {
   scriptName: "",
   sourceBookId: "",
   scriptType: "",
   originalScriptId: "",
-  auditStatus: "",
+  auditStatus: "待认领",
   scriptwriter: "",
   reviewer: "",
-}
-
-const defaultFilters = {
-  ...emptyFilters,
-  auditStatus: "待认领",
 }
 
 // ─── 审核状态色块配置 ─────────────────────────────────────────────────────────
@@ -417,10 +418,8 @@ function TaskHallTab({
   listRefreshKey: number
   onMutate: () => void
 }) {
-  const [filters, setFilters] = useState(defaultFilters)
-  const [applied, setApplied] = useState(defaultFilters)
-  const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState<PageSizeOption>(10)
+  const { draft: filters, active: applied, update: updateFilter, apply: applyFilters, reset: resetFilters } = useFilters(defaultFilters)
+  const { page, pageSize, resetPage, paginationProps: hallPaginationProps } = usePagination(10)
   const [hallData, setHallData] = useState<ScriptRow[]>([])
   const [hallTotal, setHallTotal] = useState(0)
   const [hallLoading, setHallLoading] = useState(false)
@@ -428,7 +427,7 @@ function TaskHallTab({
   const [progressRow, setProgressRow] = useState<ScriptRow | null>(null)
   const [detailRow, setDetailRow] = useState<ScriptRow | null>(null)
   const [auditRow, setAuditRow] = useState<ScriptRow | null>(null)
-  const [publishRow, setPublishRow] = useState<ScriptRow | MyAuditRow | null>(null)
+  const [publishInfo, setPublishInfo] = useState<PublishInfo | null>(null)
 
   const fetchHall = useCallback(async () => {
     setHallLoading(true)
@@ -486,7 +485,7 @@ function TaskHallTab({
       setOpenAuditAfterClaimId(rowId)
       onMutate()
     } catch (e) {
-      toast.error((e as Error).message || "领取失败")
+      toast.errorFrom(e, "领取失败")
     }
   }
 
@@ -495,9 +494,9 @@ function TaskHallTab({
     newStatus: MyAuditStatus,
     opinion: string,
     paidBreakpointNodeId: string | null,
-    paidBreakpointEpisode: number | null
+    paidBreakpointEpisode: number | null,
   ) {
-    await scriptAuditApi.review(Number(rowId), {
+    const resp = await scriptAuditApi.review(Number(rowId), {
       result: newStatus,
       opinion,
       payEpisode: newStatus === "审核通过" ? String(paidBreakpointEpisode ?? "") : "",
@@ -505,12 +504,13 @@ function TaskHallTab({
     setAuditRow(null)
     toast.success("剧本审核成功")
     onMutate()
+    return resp as { scriptId?: number; displayScriptId?: string } | undefined
   }
 
   const pageData = hallData
 
-  function handleQuery() { setApplied({ ...filters }); setPage(1) }
-  function handleReset() { setFilters(emptyFilters); setApplied(emptyFilters); setPage(1) }
+  function handleQuery() { applyFilters(); resetPage() }
+  function handleReset() { resetFilters(); resetPage() }
 
   const TABLE_HEADERS = ["剧本名称", "集数", "原书ID", "类型", "原剧本ID", "审核状态", "编剧", "审核员", "操作"]
 
@@ -524,7 +524,7 @@ function TaskHallTab({
             <input
               type="text"
               value={filters.scriptName}
-              onChange={(e) => setFilters((f) => ({ ...f, scriptName: e.target.value }))}
+              onChange={(e) => updateFilter("scriptName", e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleQuery()}
               placeholder="请输入剧本名称"
               className="h-[30px] w-[160px] rounded-[6px] border border-[#d1d5db] bg-white px-3 text-[13px] placeholder-[#9ca3af] outline-none focus:border-[#38c08f] transition-colors"
@@ -535,7 +535,7 @@ function TaskHallTab({
             <input
               type="text"
               value={filters.sourceBookId}
-              onChange={(e) => setFilters((f) => ({ ...f, sourceBookId: e.target.value }))}
+              onChange={(e) => updateFilter("sourceBookId", e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleQuery()}
               placeholder="请输入原书ID"
               className="h-[30px] w-[160px] rounded-[6px] border border-[#d1d5db] bg-white px-3 text-[13px] placeholder-[#9ca3af] outline-none focus:border-[#38c08f] transition-colors"
@@ -544,7 +544,7 @@ function TaskHallTab({
           <SelectFilter
               label="类型"
               value={filters.scriptType}
-              onChange={(v) => setFilters((f) => ({ ...f, scriptType: v }))}
+              onChange={(v) => updateFilter("scriptType", v)}
               options={scriptTypeOptions}
               placeholder="请选择"
               width="w-[140px]"
@@ -554,7 +554,7 @@ function TaskHallTab({
             <input
               type="text"
               value={filters.originalScriptId}
-              onChange={(e) => setFilters((f) => ({ ...f, originalScriptId: e.target.value }))}
+              onChange={(e) => updateFilter("originalScriptId", e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleQuery()}
               placeholder="请输入原剧本ID"
               className="h-[30px] w-[160px] rounded-[6px] border border-[#d1d5db] bg-white px-3 text-[13px] placeholder-[#9ca3af] outline-none focus:border-[#38c08f] transition-colors"
@@ -563,7 +563,7 @@ function TaskHallTab({
           <SelectFilter
               label="审核状态"
               value={filters.auditStatus}
-              onChange={(v) => setFilters((f) => ({ ...f, auditStatus: v }))}
+              onChange={(v) => updateFilter("auditStatus", v)}
               options={auditStatusOptions}
               placeholder="请选择"
               width="w-[140px]"
@@ -573,7 +573,7 @@ function TaskHallTab({
             <input
               type="text"
               value={filters.scriptwriter}
-              onChange={(e) => setFilters((f) => ({ ...f, scriptwriter: e.target.value }))}
+              onChange={(e) => updateFilter("scriptwriter", e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleQuery()}
               placeholder="请输入编剧"
               className="h-[30px] w-[140px] rounded-[6px] border border-[#d1d5db] bg-white px-3 text-[13px] placeholder-[#9ca3af] outline-none focus:border-[#38c08f] transition-colors"
@@ -584,7 +584,7 @@ function TaskHallTab({
             <input
               type="text"
               value={filters.reviewer}
-              onChange={(e) => setFilters((f) => ({ ...f, reviewer: e.target.value }))}
+              onChange={(e) => updateFilter("reviewer", e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleQuery()}
               placeholder="请输入审核员"
               className="h-[30px] w-[140px] rounded-[6px] border border-[#d1d5db] bg-white px-3 text-[13px] placeholder-[#9ca3af] outline-none focus:border-[#38c08f] transition-colors"
@@ -650,23 +650,22 @@ function TaskHallTab({
                     >
 
                       {/* 剧本名称 — 蓝色超链接，点击打开详情抽屉 */}
-                      <td className="px-4 py-3 max-w-[180px]">
+                      <td className="px-4 py-3 whitespace-nowrap">
                         <button
                           onClick={() => setDetailRow(row)}
-                          className="block truncate text-left text-[13px] font-medium text-[#2563eb] hover:text-[#1d4ed8] hover:underline transition-colors"
-                          title={row.scriptName}
+                          className="text-left text-[13px] font-medium text-[#2563eb] hover:text-[#1d4ed8] hover:underline transition-colors"
                         >
                           {row.scriptName}
                         </button>
                       </td>
                       {/* 集数 */}
-                      <td className="px-4 py-3 text-[#4b5563]">{row.episodeCount}</td>
+                      <td className="px-4 py-3 text-[#4b5563] whitespace-nowrap">{row.episodeCount}</td>
                       {/* 原书ID */}
                       <td className="px-4 py-3 font-mono text-[12px] text-[#6b7280] whitespace-nowrap">
                         {row.sourceBookId}
                       </td>
                       {/* 类型 */}
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 whitespace-nowrap">
                         <span
                           className={cn(
                             "inline-flex items-center rounded-[4px] px-2 py-0.5 text-[11.5px] font-medium",
@@ -683,10 +682,10 @@ function TaskHallTab({
                         {row.originalScriptId || <span className="font-sans text-[#d1d5db]">--</span>}
                       </td>
                       {/* 审核状态 */}
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 whitespace-nowrap">
                         <span
                           className={cn(
-                            "inline-flex items-center rounded-[4px] px-2 py-0.5 text-[11.5px] font-medium whitespace-nowrap",
+                            "inline-flex items-center rounded-[4px] px-2 py-0.5 text-[11.5px] font-medium",
                             statusStyle.bg,
                             statusStyle.text
                           )}
@@ -695,15 +694,15 @@ function TaskHallTab({
                         </span>
                       </td>
                       {/* 编剧 */}
-                      <td className="px-4 py-3 text-[#4b5563]">
+                      <td className="px-4 py-3 text-[#4b5563] whitespace-nowrap">
                         {row.scriptwriter || <span className="text-[#d1d5db]">--</span>}
                       </td>
                       {/* 审核员 */}
-                      <td className="px-4 py-3 text-[#4b5563]">
+                      <td className="px-4 py-3 text-[#4b5563] whitespace-nowrap">
                         {row.reviewer || <span className="text-[#d1d5db]">--</span>}
                       </td>
                       {/* 操作列 */}
-                      <td className="px-4 py-3 w-[120px]">
+                      <td className="px-4 py-3 whitespace-nowrap">
                         <div className="flex items-center gap-2">
                           {isClaimable
                             ? (
@@ -738,10 +737,7 @@ function TaskHallTab({
         <div className="shrink-0">
           <ListPagination
             total={hallTotal}
-            currentPage={page}
-            pageSize={pageSize}
-            onPageChange={(p) => setPage(p)}
-            onPageSizeChange={(s) => { setPageSize(s); setPage(1) }}
+            {...hallPaginationProps}
           />
         </div>
       </div>
@@ -759,15 +755,29 @@ function TaskHallTab({
         row={auditRow}
         onClose={() => setAuditRow(null)}
         onSubmit={handleSubmitFromHall}
-        onApproved={(r, paidEp) => { setAuditRow(null); setPublishRow({ ...r, _paidEp: paidEp } as any) }}
+        onApproved={(r, paidEp, result) => {
+          setAuditRow(null)
+          if (result?.scriptId) {
+            setPublishInfo({
+              scriptDbId: result.scriptId,
+              displayScriptId: result.displayScriptId ?? "",
+              scriptName: r.scriptName,
+              episodeCount: r.episodeCount,
+              paidEpisode: paidEp,
+            })
+          }
+        }}
       />
-      {publishRow && (
-        <ReviewPublishTaskDrawer
-          scriptName={publishRow.scriptName}
-          episodeCount={publishRow.episodeCount}
-          paidEpisode={(publishRow as any)._paidEp ?? null}
-          onClose={() => setPublishRow(null)}
-          onSuccess={() => setPublishRow(null)}
+      {publishInfo && (
+        <PublishTaskDrawer
+          scriptId={publishInfo.scriptDbId}
+          scriptName={publishInfo.scriptName}
+          displayScriptId={publishInfo.displayScriptId}
+          episodeCount={publishInfo.episodeCount}
+          paidEpisodeLabel={publishInfo.paidEpisode != null ? `第${publishInfo.paidEpisode}集` : "--"}
+          zIndex={120}
+          onClose={() => setPublishInfo(null)}
+          onSuccess={() => { setPublishInfo(null); onMutate() }}
         />
       )}
     </div>
@@ -1109,165 +1119,6 @@ function buildEditorNodesForReview(episodeCount: number): EditorNode[] {
   return result
 }
 
-// ─── ReviewPublishTaskDrawer ──────────────────────────────────────────────────
-
-const _artStyleOptions = ["解说漫", "动画漫", "沙雕漫", "仿真人剧"]
-const _visualEffectOptions = ["2D", "3D", "仿真人"]
-const _aspectRatioOptions = ["横屏 16:9", "竖屏 9:16"]
-
-function ReviewRadioGroup({
-  label, options, value, onChange, required, error,
-}: {
-  label: string; options: string[]; value: string
-  onChange: (v: string) => void; required?: boolean; error?: boolean
-}) {
-  return (
-    <div>
-      <p className="mb-2 text-[13px] font-medium text-[#374151]">
-        {label}{required && <span className="ml-0.5 text-[#f04438]">*</span>}
-      </p>
-      <div className="flex flex-wrap gap-2">
-        {options.map((opt) => {
-          const active = value === opt
-          return (
-            <button key={opt} type="button" onClick={() => onChange(opt)}
-              className={cn(
-                "h-[30px] rounded-[4px] border px-3.5 text-[12.5px] transition-colors",
-                active ? "border-[#38c08f] bg-[#f0fdf4] font-medium text-[#38c08f]"
-                  : error ? "border-[#fca5a5] bg-white text-[#374151] hover:border-[#38c08f]"
-                    : "border-[#d1d5db] bg-white text-[#374151] hover:border-[#38c08f] hover:text-[#38c08f]"
-              )}
-            >{opt}</button>
-          )
-        })}
-      </div>
-      {error && <p className="mt-1 text-[11.5px] text-[#f04438]">请选择{label}</p>}
-    </div>
-  )
-}
-
-function ReviewPublishTaskDrawer({
-  scriptName,
-  episodeCount,
-  paidEpisode,
-  onClose,
-  onSuccess,
-}: {
-  scriptName: string
-  episodeCount: number
-  paidEpisode?: number | null
-  onClose: () => void
-  onSuccess: () => void
-}) {
-  // 随机生成 18 位剧本 ID，格式同 395036297991716801
-  const generatedScriptId = useMemo(() => {
-    const base = BigInt("395036297991716801")
-    const offset = BigInt(Math.floor(Math.random() * 9999))
-    return (base + offset).toString()
-  }, [])
-  const [artStyle, setArtStyle] = useState("")
-  const [visualEffect, setVisualEffect] = useState("")
-  const [aspectRatio, setAspectRatio] = useState("")
-  const [remark, setRemark] = useState("")
-  const [errors, setErrors] = useState({ artStyle: false, visualEffect: false, aspectRatio: false })
-
-  function handleConfirm() {
-    const e = { artStyle: !artStyle, visualEffect: !visualEffect, aspectRatio: !aspectRatio }
-    if (e.artStyle || e.visualEffect || e.aspectRatio) { setErrors(e); return }
-    onClose()
-    onSuccess()
-  }
-
-  const paidLabel = paidEpisode != null ? `第${paidEpisode}集` : "--"
-
-  const infoFields = [
-    { label: "剧本名称", value: scriptName, mono: false },
-    { label: "剧本ID", value: generatedScriptId, mono: true },
-    { label: "集数", value: `${episodeCount} 集`, mono: false },
-    { label: "付费卡点", value: paidLabel, mono: false },
-  ]
-
-  return (
-    <>
-      <div className="fixed inset-0 bg-black/35" style={{ zIndex: 120 }} onClick={onClose} />
-      <div className="fixed right-0 top-0 flex h-full w-[640px] flex-col bg-white"
-        style={{ zIndex: 121, boxShadow: "-4px 0 24px rgba(0,0,0,0.12)" }}>
-
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-[#e5e7eb] px-6 py-4">
-          <span className="text-[15px] font-semibold text-[#111827]">发布制作任务</span>
-          <button onClick={onClose}
-            className="flex h-7 w-7 items-center justify-center rounded-[4px] text-[#9ca3af] hover:bg-[#f3f4f6] hover:text-[#374151] transition-colors">
-            <X size={16} />
-          </button>
-        </div>
-
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto px-6 py-5">
-          {/* 剧本信息卡 */}
-          <div className="mb-5 rounded-[8px] border border-[#e5e7eb] bg-[#f9fafb] px-4 py-4">
-            <p className="mb-3 text-[11.5px] font-semibold uppercase tracking-wide text-[#9ca3af]">剧本信息</p>
-            <div className="grid grid-cols-2 gap-x-6 gap-y-3">
-              {infoFields.map(({ label, value, mono }) => (
-                <div key={label}>
-                  <p className="text-[11.5px] text-[#9ca3af]">{label}</p>
-                  <p className={cn("mt-0.5 break-all text-[12.5px]", mono ? "font-mono text-[#4b5563]" : "text-[#111827]")}>
-                    {label === "付费卡点" && value !== "--" ? (
-                      <span className="inline-flex items-center rounded-[4px] border border-[#fde68a] bg-[#fef9ee] px-2 py-0.5 text-[11.5px] text-[#b45309]">
-                        {value}
-                      </span>
-                    ) : value}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* 制作类型配置 */}
-          <div className="rounded-[8px] border border-[#e5e7eb] bg-white px-4 py-4">
-            <p className="mb-4 text-[11.5px] font-semibold uppercase tracking-wide text-[#9ca3af]">制作类型配置</p>
-            <div className="flex flex-col gap-5">
-              <ReviewRadioGroup label="画风类型" options={_artStyleOptions} value={artStyle}
-                onChange={(v) => { setArtStyle(v); setErrors((p) => ({ ...p, artStyle: false })) }}
-                required error={errors.artStyle} />
-              <div className="h-px bg-[#f3f4f6]" />
-              <ReviewRadioGroup label="视觉效果" options={_visualEffectOptions} value={visualEffect}
-                onChange={(v) => { setVisualEffect(v); setErrors((p) => ({ ...p, visualEffect: false })) }}
-                required error={errors.visualEffect} />
-              <div className="h-px bg-[#f3f4f6]" />
-              <ReviewRadioGroup label="画面比例" options={_aspectRatioOptions} value={aspectRatio}
-                onChange={(v) => { setAspectRatio(v); setErrors((p) => ({ ...p, aspectRatio: false })) }}
-                required error={errors.aspectRatio} />
-              <div className="h-px bg-[#f3f4f6]" />
-              <div>
-                <p className="mb-2 text-[13px] font-medium text-[#374151]">制作备注</p>
-                <textarea rows={3} placeholder="请输入制作备注（选填）" value={remark}
-                  onChange={(e) => setRemark(e.target.value)}
-                  className="w-full resize-none rounded-[6px] border border-[#d1d5db] px-3 py-2 text-[13px] text-[#374151] outline-none focus:border-[#38c08f] transition-colors" />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-between border-t border-[#e5e7eb] px-6 py-4">
-          <span className="text-[12.5px] text-[#9ca3af]">请确认配置后再发布</span>
-          <div className="flex items-center gap-2.5">
-            <button onClick={onClose}
-              className="rounded-[6px] border border-[#d1d5db] bg-white px-5 py-1.5 text-[13px] text-[#374151] hover:bg-[#f9fafb] transition-colors">
-              取消
-            </button>
-            <button onClick={handleConfirm}
-              className="rounded-[6px] bg-[#38c08f] px-5 py-1.5 text-[13px] font-medium text-white hover:bg-[#2da87a] transition-colors">
-              确认发布
-            </button>
-          </div>
-        </div>
-      </div>
-    </>
-  )
-}
-
 function AuditHandleDrawer({
   row,
   onClose,
@@ -1276,8 +1127,8 @@ function AuditHandleDrawer({
 }: {
   row: (MyAuditRow | ScriptRow) | null
   onClose: () => void
-  onSubmit: (rowId: string, newStatus: MyAuditStatus, opinion: string, paidBreakpointNodeId: string | null, paidBreakpointEpisode: number | null) => void | Promise<void>
-  onApproved?: (row: MyAuditRow | ScriptRow, paidEp: number | null) => void
+  onSubmit: (rowId: string, newStatus: MyAuditStatus, opinion: string, paidBreakpointNodeId: string | null, paidBreakpointEpisode: number | null) => Promise<{ scriptId?: number; displayScriptId?: string } | void> | void
+  onApproved?: (row: MyAuditRow | ScriptRow, paidEp: number | null, result?: { scriptId?: number; displayScriptId?: string }) => void
 }) {
   const [scriptName, setScriptName] = useState("")
   const [nodes, setNodes] = useState<EditorNode[]>([])
@@ -1413,12 +1264,12 @@ function AuditHandleDrawer({
     }
     try {
       await persistCurrentEdits()
-      await onSubmit(row!.id, statusMap[action], opinion.trim(), paidBreakpointNodeId, paidBreakpointEpisode)
+      const result = await onSubmit(row!.id, statusMap[action], opinion.trim(), paidBreakpointNodeId, paidBreakpointEpisode)
       if (action === "审核通过" && onApproved && row) {
-        onApproved(row, paidBreakpointEpisode)
+        onApproved(row, paidBreakpointEpisode, result as { scriptId?: number; displayScriptId?: string } | undefined)
       }
     } catch (e) {
-      toast.error((e as Error).message || "操作失败")
+      toast.errorFrom(e, "操作失败")
     }
   }
 
@@ -1537,7 +1388,7 @@ function AuditHandleDrawer({
                         setSaved(true)
                         setTimeout(() => setSaved(false), 2000)
                       } catch (e) {
-                        toast.error((e as Error).message || "保存失败")
+                        toast.errorFrom(e, "保存失败")
                       }
                     })()
                   }}
@@ -1729,17 +1580,15 @@ function MyReviewTab({
   listRefreshKey: number
   onMutate: () => void
 }) {
-  const [filters, setFilters] = useState(myAuditDefaultFilters)
-  const [applied, setApplied] = useState(myAuditDefaultFilters)
-  const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState<PageSizeOption>(10)
+  const { draft: filters, active: applied, update: updateFilter, apply: applyFilters, reset: resetFilters } = useFilters(myAuditDefaultFilters)
+  const { page, pageSize, resetPage, paginationProps: minePaginationProps } = usePagination(10)
   const [mineData, setMineData] = useState<MyAuditRow[]>([])
   const [mineTotal, setMineTotal] = useState(0)
   const [mineLoading, setMineLoading] = useState(false)
   const [detailRow, setDetailRow] = useState<MyAuditRow | null>(null)
   const [auditRow, setAuditRow] = useState<MyAuditRow | null>(null)
   const [recordRow, setRecordRow] = useState<(MyAuditRow & { auditRecords: ApprovalNode[] }) | null>(null)
-  const [publishRow, setPublishRow] = useState<MyAuditRow | null>(null)
+  const [publishInfo, setPublishInfo] = useState<PublishInfo | null>(null)
 
   const fetchMine = useCallback(async () => {
     setMineLoading(true)
@@ -1768,11 +1617,11 @@ function MyReviewTab({
     void fetchMine()
   }, [fetchMine, listRefreshKey])
 
-  function handleQuery() { setApplied({ ...filters }); setPage(1) }
-  function handleReset() { setFilters(myAuditDefaultFilters); setApplied(myAuditDefaultFilters); setPage(1) }
+  function handleQuery() { applyFilters(); resetPage() }
+  function handleReset() { resetFilters(); resetPage() }
 
   async function handleSubmitAudit(rowId: string, newStatus: MyAuditStatus, opinion: string, paidBreakpointNodeId: string | null, paidBreakpointEpisode: number | null) {
-    await scriptAuditApi.review(Number(rowId), {
+    const resp = await scriptAuditApi.review(Number(rowId), {
       result: newStatus,
       opinion,
       payEpisode: newStatus === "审核通过" ? String(paidBreakpointEpisode ?? "") : "",
@@ -1780,6 +1629,7 @@ function MyReviewTab({
     setAuditRow(null)
     toast.success("剧本审核成功")
     onMutate()
+    return resp as { scriptId?: number; displayScriptId?: string } | undefined
   }
 
   async function openRecordRow(row: MyAuditRow) {
@@ -1824,7 +1674,7 @@ function MyReviewTab({
             <input
               type="text"
               value={filters.scriptName}
-              onChange={(e) => setFilters((f) => ({ ...f, scriptName: e.target.value }))}
+              onChange={(e) => updateFilter("scriptName", e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleQuery()}
               placeholder="请输入剧本名称"
               className="h-[30px] w-[160px] rounded-[6px] border border-[#d1d5db] bg-white px-3 text-[13px] placeholder-[#9ca3af] outline-none focus:border-[#38c08f] transition-colors"
@@ -1835,7 +1685,7 @@ function MyReviewTab({
             <input
               type="text"
               value={filters.sourceBookId}
-              onChange={(e) => setFilters((f) => ({ ...f, sourceBookId: e.target.value }))}
+              onChange={(e) => updateFilter("sourceBookId", e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleQuery()}
               placeholder="请输入原书ID"
               className="h-[30px] w-[160px] rounded-[6px] border border-[#d1d5db] bg-white px-3 text-[13px] placeholder-[#9ca3af] outline-none focus:border-[#38c08f] transition-colors"
@@ -1844,7 +1694,7 @@ function MyReviewTab({
           <SelectFilter
               label="类型"
               value={filters.scriptType}
-              onChange={(v) => setFilters((f) => ({ ...f, scriptType: v }))}
+              onChange={(v) => updateFilter("scriptType", v)}
               options={scriptTypeOptions}
               placeholder="请选择"
               width="w-[140px]"
@@ -1854,7 +1704,7 @@ function MyReviewTab({
             <input
               type="text"
               value={filters.originalScriptId}
-              onChange={(e) => setFilters((f) => ({ ...f, originalScriptId: e.target.value }))}
+              onChange={(e) => updateFilter("originalScriptId", e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleQuery()}
               placeholder="请输入原剧本ID"
               className="h-[30px] w-[160px] rounded-[6px] border border-[#d1d5db] bg-white px-3 text-[13px] placeholder-[#9ca3af] outline-none focus:border-[#38c08f] transition-colors"
@@ -1863,7 +1713,7 @@ function MyReviewTab({
           <SelectFilter
               label="审核状态"
               value={filters.auditStatus}
-              onChange={(v) => setFilters((f) => ({ ...f, auditStatus: v }))}
+              onChange={(v) => updateFilter("auditStatus", v)}
               options={myAuditStatusOptions}
               placeholder="请选择"
               width="w-[140px]"
@@ -1873,7 +1723,7 @@ function MyReviewTab({
             <input
               type="text"
               value={filters.scriptwriter}
-              onChange={(e) => setFilters((f) => ({ ...f, scriptwriter: e.target.value }))}
+              onChange={(e) => updateFilter("scriptwriter", e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleQuery()}
               placeholder="请输入编剧"
               className="h-[30px] w-[140px] rounded-[6px] border border-[#d1d5db] bg-white px-3 text-[13px] placeholder-[#9ca3af] outline-none focus:border-[#38c08f] transition-colors"
@@ -1935,23 +1785,22 @@ function MyReviewTab({
                       )}
                     >
                       {/* 剧本名称 */}
-                      <td className="px-4 py-3 max-w-[200px]">
+                      <td className="px-4 py-3 whitespace-nowrap">
                         <button
                           onClick={() => setDetailRow(row)}
-                          className="block truncate text-left text-[13px] font-medium text-[#2563eb] hover:text-[#1d4ed8] hover:underline transition-colors"
-                          title={row.scriptName}
+                          className="text-left text-[13px] font-medium text-[#2563eb] hover:text-[#1d4ed8] hover:underline transition-colors"
                         >
                           {row.scriptName}
                         </button>
                       </td>
                       {/* 集数 */}
-                      <td className="px-4 py-3 text-[#4b5563]">{row.episodeCount}</td>
+                      <td className="px-4 py-3 text-[#4b5563] whitespace-nowrap">{row.episodeCount}</td>
                       {/* 原书ID */}
                       <td className="px-4 py-3 font-mono text-[12px] text-[#6b7280] whitespace-nowrap">
                         {row.sourceBookId}
                       </td>
                       {/* 类型 */}
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 whitespace-nowrap">
                         <span className={cn(
                           "inline-flex items-center rounded-[4px] px-2 py-0.5 text-[11.5px] font-medium",
                           row.scriptType === "原作" ? "bg-[#eff6ff] text-[#2563eb]" : "bg-[#f5f3ff] text-[#7c3aed]"
@@ -1964,18 +1813,18 @@ function MyReviewTab({
                         {row.originalScriptId || <span className="font-sans text-[#d1d5db]">--</span>}
                       </td>
                       {/* 审核状态 */}
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 whitespace-nowrap">
                         <span className={cn(
-                          "inline-flex items-center rounded-[4px] px-2 py-0.5 text-[11.5px] font-medium whitespace-nowrap",
+                          "inline-flex items-center rounded-[4px] px-2 py-0.5 text-[11.5px] font-medium",
                           statusStyle.bg, statusStyle.text
                         )}>
                           {row.auditStatus}
                         </span>
                       </td>
                       {/* 编剧 */}
-                      <td className="px-4 py-3 text-[#4b5563]">{row.scriptwriter}</td>
+                      <td className="px-4 py-3 text-[#4b5563] whitespace-nowrap">{row.scriptwriter}</td>
                       {/* 操作列 */}
-                      <td className="px-4 py-3 whitespace-nowrap w-[160px]">
+                      <td className="px-4 py-3 whitespace-nowrap">
                         <div className="flex items-center gap-2">
                           {canAudit && (
                             <button
@@ -2006,10 +1855,7 @@ function MyReviewTab({
         <div className="shrink-0">
           <ListPagination
             total={mineTotal}
-            currentPage={page}
-            pageSize={pageSize}
-            onPageChange={(p) => setPage(p)}
-            onPageSizeChange={(s) => { setPageSize(s); setPage(1) }}
+            {...minePaginationProps}
           />
         </div>
       </div>
@@ -2023,16 +1869,29 @@ function MyReviewTab({
         row={auditRow}
         onClose={() => setAuditRow(null)}
         onSubmit={handleSubmitAudit}
-        onApproved={(r, paidEp) => { setAuditRow(null); setPublishRow({ ...r, _paidEp: paidEp } as any) }}
-        
+        onApproved={(r, paidEp, result) => {
+          setAuditRow(null)
+          if (result?.scriptId) {
+            setPublishInfo({
+              scriptDbId: result.scriptId,
+              displayScriptId: result.displayScriptId ?? "",
+              scriptName: r.scriptName,
+              episodeCount: r.episodeCount,
+              paidEpisode: paidEp,
+            })
+          }
+        }}
       />
-      {publishRow && (
-        <ReviewPublishTaskDrawer
-          scriptName={publishRow.scriptName}
-          episodeCount={publishRow.episodeCount}
-          paidEpisode={(publishRow as any)._paidEp ?? null}
-          onClose={() => setPublishRow(null)}
-          onSuccess={() => setPublishRow(null)}
+      {publishInfo && (
+        <PublishTaskDrawer
+          scriptId={publishInfo.scriptDbId}
+          scriptName={publishInfo.scriptName}
+          displayScriptId={publishInfo.displayScriptId}
+          episodeCount={publishInfo.episodeCount}
+          paidEpisodeLabel={publishInfo.paidEpisode != null ? `第${publishInfo.paidEpisode}集` : "--"}
+          zIndex={120}
+          onClose={() => setPublishInfo(null)}
+          onSuccess={() => { setPublishInfo(null); onMutate() }}
         />
       )}
 

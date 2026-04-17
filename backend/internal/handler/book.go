@@ -1,8 +1,6 @@
 package handler
 
 import (
-	"strings"
-
 	"comic-admin/internal/model"
 	"comic-admin/internal/pkg/pagination"
 	"comic-admin/internal/pkg/response"
@@ -14,21 +12,10 @@ func ListBooks(c *gin.Context) {
 	p := pagination.Parse(c)
 	db := model.DB.Model(&model.Book{})
 
-	if v := strings.TrimSpace(c.Query("bookId")); v != "" {
-		db = db.Where("book_id = ?", v)
-	}
-	if v := strings.TrimSpace(c.Query("bookName")); v != "" {
-		db = db.Where("book_name LIKE ?", "%"+v+"%")
-	}
-	if v := c.Query("contentType"); v != "" {
-		db = db.Where("content_type = ?", v)
-	}
-	if v := c.Query("startDate"); v != "" {
-		db = db.Where("listing_time >= ?", v)
-	}
-	if v := c.Query("endDate"); v != "" {
-		db = db.Where("listing_time <= ?", v+" 23:59:59")
-	}
+	db = ApplyExact(db, c, "bookId", "book_id")
+	db = ApplyLike(db, c, "bookName", "book_name")
+	db = ApplyExact(db, c, "contentType", "content_type")
+	db = ApplyDateRange(db, c, "listing_time", "startDate", "endDate")
 	if v := c.Query("hasScript"); v != "" {
 		sub := model.DB.Table("scripts").Select("book_id").Group("book_id")
 		if v == "是" {
@@ -38,17 +25,16 @@ func ListBooks(c *gin.Context) {
 		}
 	}
 
-	var total int64
-	db.Count(&total)
-
 	type BookListItem struct {
 		model.Book
 		RelatedScriptCount int64 `json:"relatedScriptCount"`
 	}
 
 	var books []model.Book
-	db.Select("id, book_id, book_name, content_type, category, tags, word_count, listing_time, created_at").
-		Order("id DESC").Scopes(pagination.Paginate(p)).Find(&books)
+	total, _ := pagination.CountAndFind(
+		db.Select("id, book_id, book_name, content_type, category, tags, word_count, listing_time, created_at"),
+		p, "id DESC", &books,
+	)
 
 	items := make([]BookListItem, len(books))
 	for i, b := range books {
@@ -66,8 +52,8 @@ func GetBook(c *gin.Context) {
 		return
 	}
 
-	var book model.Book
-	if err := model.DB.First(&book, id).Error; err != nil {
+	book, err := Svc.Book.GetByID(id)
+	if err != nil {
 		response.FailNotFound(c, "书籍不存在")
 		return
 	}

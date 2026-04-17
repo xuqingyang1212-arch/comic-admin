@@ -3,12 +3,24 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from "react"
 import { Search, RotateCcw, X } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { SelectFilter } from "@/components/shared"
+import { SelectFilter, ConfirmDialog } from "@/components/shared"
 import { scriptDraftApi, bookApi } from "@/lib/api"
 import { toast } from "@/lib/toast"
+import { formatDateTime } from "@/lib/format"
 import { ListPagination, type PageSizeOption } from "@/components/list-pagination"
 import { usePerm } from "@/components/admin-layout"
-import { ScriptEditorDrawer, BookDetail, bookDetailMockMap, sharedParagraphs, TRIAL_PARAGRAPH_INDEX, EditorNode, buildInitialNodes, calcTotalWords, calcEpisodeIndex, calcSegmentWords } from "@/components/book-management"
+import {
+  sharedParagraphs,
+  TRIAL_PARAGRAPH_INDEX,
+  calcTotalWords,
+  calcEpisodeIndex,
+  calcSegmentWords,
+  buildInitialNodes,
+  type EditorNode,
+  type BookDetail,
+} from "@/lib/script-editor"
+import { ScriptEditorDrawer } from "@/components/script-editor"
+import { bookDetailMockMap } from "@/components/book-management"
 
 // ─── 类型定义 ─────────────────────────────────────────────────────────────────
 
@@ -35,13 +47,7 @@ interface ScriptRow {
 
 // ─── 列表项映射 ───────────────────────────────────────────────────────────────
 
-function formatDateTime(iso: string | undefined): string {
-  if (!iso) return ""
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return String(iso)
-  const pad = (n: number) => String(n).padStart(2, "0")
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-}
+// formatDateTime imported from @/lib/format
 
 function mapDraftToRow(d: {
   id: number
@@ -219,46 +225,6 @@ function AuditRecordDrawer({
   )
 }
 
-// ─── 删除确认弹层 ─────────────────────────────────────────────────────────────
-
-function DeleteConfirmModal({
-  row,
-  onConfirm,
-  onCancel,
-}: {
-  row: ScriptRow | null
-  onConfirm: () => void
-  onCancel: () => void
-}) {
-  if (!row) return null
-
-  return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/25">
-      <div className="w-[360px] rounded-[10px] bg-white shadow-2xl">
-        <div className="px-6 pt-5 pb-4">
-          <p className="text-[15px] font-semibold text-[#111827]">确认删除</p>
-          <p className="mt-2 text-[13px] text-[#4b5563]">
-            确定要删除剧本 <span className="font-medium text-[#111827]">「{row.scriptName}」</span> 吗？删除后无法恢复。
-          </p>
-        </div>
-        <div className="flex items-center justify-end gap-2 border-t border-[#f3f4f6] px-6 py-3">
-          <button
-            onClick={onCancel}
-            className="rounded-[6px] border border-[#d1d5db] bg-white px-4 py-1.5 text-[13px] text-[#374151] hover:bg-[#f5f6f7] transition-colors"
-          >
-            取消
-          </button>
-          <button
-            onClick={onConfirm}
-            className="rounded-[6px] bg-[#dc2626] px-4 py-1.5 text-[13px] font-medium text-white hover:bg-[#b91c1c] transition-colors"
-          >
-            确认删除
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 // ─── 进入工作台：构建 BookDetail ──────────────────────────────────────────────
 
@@ -558,7 +524,7 @@ export default function ScriptCreation() {
       .catch((e) => {
         if (!cancelled) {
           setAuditLogs([])
-          toast.error(e instanceof Error ? e.message : "加载审核记录失败")
+          toast.errorFrom(e, "加载审核记录失败")
         }
       })
       .finally(() => {
@@ -582,7 +548,7 @@ export default function ScriptCreation() {
       setDeleteRow(null)
       await fetchDrafts()
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "删除失败")
+      toast.errorFrom(e, "删除失败")
     }
   }
 
@@ -721,20 +687,20 @@ export default function ScriptCreation() {
                   )}
                 >
                   {/* 剧本名称 */}
-                  <td className="px-4 py-3 font-medium max-w-[200px]">
+                  <td className="px-4 py-3 font-medium whitespace-nowrap">
                     <button
                       onClick={() => setDetailRow(row)}
-                      className="line-clamp-1 block text-left text-[#2563eb] hover:text-[#1d4ed8] hover:underline transition-colors"
+                      className="text-left text-[#2563eb] hover:text-[#1d4ed8] hover:underline transition-colors"
                     >
                       {row.scriptName}
                     </button>
                   </td>
                   {/* 集数 */}
-                  <td className="px-4 py-3 text-[#4b5563]">{row.episodeCount}</td>
+                  <td className="px-4 py-3 text-[#4b5563] whitespace-nowrap">{row.episodeCount}</td>
                   {/* 原书ID */}
                   <td className="px-4 py-3 text-[#6b7280] font-mono text-[12px] whitespace-nowrap">{row.sourceBookId}</td>
                   {/* 类型 */}
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 whitespace-nowrap">
                     <span className={cn(
                       "inline-flex items-center rounded-[4px] px-2 py-0.5 text-[11.5px] font-medium",
                       row.scriptType === "原作" ? "bg-[#eff6ff] text-[#2563eb]" : "bg-[#f5f3ff] text-[#7c3aed]"
@@ -747,7 +713,7 @@ export default function ScriptCreation() {
                     {row.originalScriptId || <span className="font-sans text-[#d1d5db]">--</span>}
                   </td>
                   {/* 审核状态 */}
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 whitespace-nowrap">
                     <span className={cn(
                       "inline-flex items-center rounded-[4px] px-2 py-0.5 text-[11.5px] font-medium",
                       auditStatusStyle[row.auditStatus]?.bg,
@@ -757,7 +723,7 @@ export default function ScriptCreation() {
                     </span>
                   </td>
                   {/* 审核员 */}
-                  <td className="px-4 py-3 text-[#4b5563]">
+                  <td className="px-4 py-3 text-[#4b5563] whitespace-nowrap">
                     {row.reviewer || <span className="text-[#d1d5db]">--</span>}
                   </td>
                   {/* 操作列 */}
@@ -840,7 +806,16 @@ export default function ScriptCreation() {
           onClose={() => setDetailRow(null)}
         />
       )}
-      <DeleteConfirmModal row={deleteRow} onConfirm={handleDelete} onCancel={() => setDeleteRow(null)} />
+      {deleteRow && (
+        <ConfirmDialog
+          title="确认删除"
+          message={<>确定要删除剧本 <span className="font-medium text-[#111827]">「{deleteRow.scriptName}」</span> 吗？删除后无法恢复。</>}
+          confirmLabel="确认删除"
+          danger
+          onConfirm={handleDelete}
+          onCancel={() => setDeleteRow(null)}
+        />
+      )}
     </div>
   )
 }

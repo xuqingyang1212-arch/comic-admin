@@ -8,74 +8,22 @@ import { toast } from "@/lib/toast"
 import { VideoPlayerModal, VideoThumbnail, RemoteVideoThumbnail } from "@/components/video-thumbnail"
 import { ImageThumbnail, ImageUploadWithProgress, UploadProgressBar } from "@/components/image-thumbnail"
 import type { UploadFileState, RemoteFileState } from "@/components/video-thumbnail"
-import { FilterInput, SelectFilter } from "@/components/shared"
-import { ListPagination, type PageSizeOption } from "@/components/list-pagination"
+import { FilterInput, SelectFilter, ImageGalleryModal } from "@/components/shared"
+import { TASK_TYPE_OPTIONS, MY_TASK_PROGRESS_BY_TYPE } from "@/lib/constants"
+import { formatDateTime } from "@/lib/format"
+import { ListPagination } from "@/components/list-pagination"
+import { useFilters } from "@/hooks/use-filters"
+import { usePagination } from "@/hooks/use-pagination"
 import { usePerm } from "@/components/admin-layout"
 import { VideoSlot } from "@/components/video-slot"
 import {
   sharedParagraphs,
-  EditorNode,
   calcTotalWords,
   calcEpisodeIndex,
   calcSegmentWords,
-} from "@/components/book-management"
+  type EditorNode,
+} from "@/lib/script-editor"
 
-// ─── Image Gallery Modal ─────────────────────────────────────────────────────
-
-function ImageGalleryModal({ images, initialIndex = 0, onClose }: { images: string[]; initialIndex?: number; onClose: () => void }) {
-  const [idx, setIdx] = useState(initialIndex)
-  const total = images.length
-  const hasPrev = idx > 0
-  const hasNext = idx < total - 1
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose()
-      if (e.key === "ArrowLeft" && hasPrev) setIdx((i) => i - 1)
-      if (e.key === "ArrowRight" && hasNext) setIdx((i) => i + 1)
-    }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [onClose, hasPrev, hasNext])
-
-  return (
-    <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/70" onClick={onClose}>
-      <div className="relative max-w-[80vw] max-h-[80vh] flex flex-col items-center" onClick={(e) => e.stopPropagation()}>
-        <img src={images[idx]} alt={`预览 ${idx + 1}/${total}`} className="max-w-full max-h-[75vh] rounded-[8px] object-contain shadow-2xl" />
-        <button
-          onClick={onClose}
-          className="absolute -right-3 -top-3 flex h-7 w-7 items-center justify-center rounded-full bg-white shadow-md text-[#374151] hover:bg-[#f3f4f6] transition-colors"
-        >
-          <X size={14} />
-        </button>
-
-        {total > 1 && (
-          <>
-            {hasPrev && (
-              <button
-                onClick={() => setIdx((i) => i - 1)}
-                className="absolute left-[-48px] top-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center rounded-full bg-white/90 shadow-lg text-[#374151] hover:bg-white transition-colors"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M15 18l-6-6 6-6"/></svg>
-              </button>
-            )}
-            {hasNext && (
-              <button
-                onClick={() => setIdx((i) => i + 1)}
-                className="absolute right-[-48px] top-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center rounded-full bg-white/90 shadow-lg text-[#374151] hover:bg-white transition-colors"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M9 18l6-6-6-6"/></svg>
-              </button>
-            )}
-            <div className="mt-3 rounded-full bg-black/50 px-3 py-1">
-              <span className="text-[12px] text-white/90">{idx + 1} / {total}</span>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  )
-}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -135,27 +83,6 @@ type UploadType = "上传初版" | "上传终版" | "上传修改版"
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const taskTypeOptions = [
-  { label: "制作", value: "制作" },
-  { label: "修改", value: "修改" },
-]
-
-const taskProgressByType: Record<string, { label: string; value: string }[]> = {
-  "制作": [
-    { label: "初版制作中", value: "初版制作中" },
-    { label: "初版审核中", value: "初版审核中" },
-    { label: "终版制作中", value: "终版制作中" },
-    { label: "终版审核中", value: "终版审核中" },
-    { label: "已完成", value: "已完成" },
-    { label: "已取消", value: "已取消" },
-  ],
-  "修改": [
-    { label: "修改版制作中", value: "修改版制作中" },
-    { label: "修改版审核中", value: "修改版审核中" },
-    { label: "已完成", value: "已完成" },
-    { label: "已取消", value: "已取消" },
-  ],
-}
 
 const auditProgressOptions = [
   { label: "待提审", value: "待提审" },
@@ -173,16 +100,7 @@ const defaultFilters = {
 
 // ─── API helpers ─────────────────────────────────────────────────────────────
 
-function formatApiDateTime(iso: string): string {
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, "0")
-  const day = String(d.getDate()).padStart(2, "0")
-  const h = String(d.getHours()).padStart(2, "0")
-  const min = String(d.getMinutes()).padStart(2, "0")
-  return `${y}-${m}-${day} ${h}:${min}`
-}
+const formatApiDateTime = formatDateTime
 
 function mapProductionTaskToRow(task: Record<string, unknown>): MyTaskRow {
   const t = task as {
@@ -594,7 +512,7 @@ function MyTaskScriptDetailDrawer({
         </div>
       </div>
 
-      {previewGallery && <ImageGalleryModal images={previewGallery.images} initialIndex={previewGallery.index} onClose={() => setPreviewGallery(null)} />}
+      {previewGallery && <ImageGalleryModal images={previewGallery.images} initialIndex={previewGallery.index} onClose={() => setPreviewGallery(null)} zIndex={130} />}
     </>
   )
 }
@@ -800,7 +718,7 @@ function AuditRecordDrawer({ row, onClose }: { row: MyTaskRow; onClose: () => vo
       </div>
 
       {/* 图片画廊预览 */}
-      {previewGallery && <ImageGalleryModal images={previewGallery.images} initialIndex={previewGallery.index} onClose={() => setPreviewGallery(null)} />}
+      {previewGallery && <ImageGalleryModal images={previewGallery.images} initialIndex={previewGallery.index} onClose={() => setPreviewGallery(null)} zIndex={130} />}
     </>
   )
 }
@@ -1009,7 +927,7 @@ function useEpisodeVideoGroup(episodeCount: number) {
         })
       })
       .catch((e) => {
-        toast.error(e instanceof Error ? e.message : "视频上传失败")
+        toast.errorFrom(e, "视频上传失败")
         setVideos((prev) => {
           const n = [...prev]
           if (n[idx]?.file === f) n[idx] = null
@@ -1162,7 +1080,7 @@ function UploadDrawer({
         setDraftVideoState((prev) => (prev?.file === f ? { ...prev, progress: 100, done: true, remoteUrl: fileUrl } : prev))
       })
       .catch((e) => {
-        toast.error(e instanceof Error ? e.message : "上传失败")
+        toast.errorFrom(e, "上传失败")
         setDraftVideoState(null)
       })
   }
@@ -1188,7 +1106,7 @@ function UploadDrawer({
             })
           })
           .catch((e) => {
-            toast.error(e instanceof Error ? e.message : "封面上传失败")
+            toast.errorFrom(e, "封面上传失败")
             setCoverStates((cur) => cur.filter((s) => s.file !== f))
           })
       })
@@ -1217,7 +1135,7 @@ function UploadDrawer({
             })
           })
           .catch((e) => {
-            toast.error(e instanceof Error ? e.message : "版权材料上传失败")
+            toast.errorFrom(e, "版权材料上传失败")
             setCopyrightStates((cur) => cur.filter((s) => s.file !== f))
           })
       })
@@ -1379,7 +1297,7 @@ function UploadDrawer({
       await productionTaskApi.submitDelivery(row.id, body)
       onSubmitSuccess()
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "提交失败")
+      toast.errorFrom(e, "提交失败")
     } finally {
       setSubmitting(false)
     }
@@ -1641,10 +1559,8 @@ export default function MyTask() {
   const [data, setData] = useState<MyTaskRow[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
-  const [filters, setFilters] = useState({ ...defaultFilters })
-  const [applied, setApplied] = useState({ ...defaultFilters })
-  const [currentPage, setCurrentPage] = useState(1)
-  const [pageSize, setPageSize] = useState<PageSizeOption>(10)
+  const { draft: filters, active: applied, update: setField, apply: applyFilters, reset: resetFilters } = useFilters(defaultFilters)
+  const { page, pageSize, setPage, resetPage, paginationProps } = usePagination(10)
 
   const [auditDrawerRow, setAuditDrawerRow] = useState<MyTaskRow | null>(null)
   const [uploadDrawerRow, setUploadDrawerRow] = useState<MyTaskRow | null>(null)
@@ -1662,7 +1578,7 @@ export default function MyTask() {
     setLoading(true)
     try {
       const res = await productionTaskApi.mine({
-        page: currentPage,
+        page,
         pageSize,
         taskName: applied.scriptName.trim() || undefined,
         taskType: applied.taskType || undefined,
@@ -1681,7 +1597,7 @@ export default function MyTask() {
       setLoading(false)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPage, pageSize, applied.scriptName, applied.taskType, applied.taskProgress, applied.reviewer, querySeq])
+  }, [page, pageSize, applied.scriptName, applied.taskType, applied.taskProgress, applied.reviewer, querySeq])
 
   useEffect(() => {
     void fetchTasks()
@@ -1689,31 +1605,23 @@ export default function MyTask() {
 
   useEffect(() => {
     const maxPage = Math.max(1, Math.ceil(total / pageSize) || 1)
-    if (currentPage > maxPage) setCurrentPage(maxPage)
-  }, [total, pageSize, currentPage])
-
-  function setField<K extends keyof typeof defaultFilters>(key: K, value: string) {
-    setFilters((prev) => ({ ...prev, [key]: value }))
-  }
+    if (page > maxPage) setPage(maxPage)
+  }, [total, pageSize, page, setPage])
 
   function handleTaskTypeChange(val: string) {
-    setFilters((prev) => ({ ...prev, taskType: val, taskProgress: "" }))
+    setField("taskType", val)
+    setField("taskProgress", "")
   }
 
   function handleQuery() {
-    setApplied({
-      ...filters,
-      scriptName: filters.scriptName.trim(),
-      reviewer: filters.reviewer.trim(),
-    })
-    setCurrentPage(1)
+    applyFilters()
+    resetPage()
     setQuerySeq((n) => n + 1)
   }
 
   function handleReset() {
-    setFilters({ ...defaultFilters })
-    setApplied({ ...defaultFilters })
-    setCurrentPage(1)
+    resetFilters()
+    resetPage()
   }
 
   const uploadToastLabel: Record<UploadType, string> = {
@@ -1770,7 +1678,7 @@ export default function MyTask() {
             />
             <SelectFilter
               label="任务类型"
-              options={taskTypeOptions}
+              options={TASK_TYPE_OPTIONS}
               value={filters.taskType}
               onChange={handleTaskTypeChange}
               width="w-[90px]"
@@ -1781,7 +1689,7 @@ export default function MyTask() {
               {filters.taskType ? (
                 <SelectFilter
                   label=""
-                  options={taskProgressByType[filters.taskType] ?? []}
+                  options={MY_TASK_PROGRESS_BY_TYPE[filters.taskType] ?? []}
                   value={filters.taskProgress}
                   onChange={(v) => setField("taskProgress", v)}
                   width="w-[130px]"
@@ -1824,7 +1732,7 @@ export default function MyTask() {
 
         {/* Table */}
         <div className="flex-1 overflow-x-auto">
-          <table className="w-full border-collapse text-[13px]">
+          <table className="w-full min-w-[800px] border-collapse text-[13px]">
             <thead>
               <tr className="bg-[#f9fafb]">
                 {[
@@ -1924,10 +1832,7 @@ export default function MyTask() {
         {/* Pagination */}
         <ListPagination
           total={total}
-          currentPage={currentPage}
-          pageSize={pageSize}
-          onPageChange={(p) => setCurrentPage(p)}
-          onPageSizeChange={(s) => { setPageSize(s); setCurrentPage(1) }}
+          {...paginationProps}
         />
       </div>
 

@@ -5,25 +5,30 @@ import { ChevronDown, X, Search, RotateCcw } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { scriptApi, bookApi, scriptDraftApi } from "@/lib/api"
 import { toast } from "@/lib/toast"
-import { ListPagination, type PageSizeOption } from "@/components/list-pagination"
-import { FilterInput, DateRangePicker } from "@/components/shared"
+import { ListPagination } from "@/components/list-pagination"
+import { useFilters } from "@/hooks/use-filters"
+import { usePagination } from "@/hooks/use-pagination"
+import { FilterInput, DateRangePicker, PublishTaskDrawer } from "@/components/shared"
+import { formatDateTime } from "@/lib/format"
 import {
   sharedParagraphs,
   TRIAL_PARAGRAPH_INDEX,
-  EditorNode,
+  newId,
   calcTotalWords,
   calcEpisodeIndex,
   calcSegmentWords,
   buildInitialNodes,
-  newId,
+  type EditorNode,
+  type BookDetail,
+  type ScriptDraftPersistBody,
+} from "@/lib/script-editor"
+import {
   OrangeDividerNode,
   InsertDividerBtn,
   ParagraphEditor,
   FloatingToolbar,
   ScriptEditorDrawer,
-  type BookDetail,
-  type ScriptDraftPersistBody,
-} from "@/components/book-management"
+} from "@/components/script-editor"
 import { usePerm } from "@/components/admin-layout"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -78,13 +83,7 @@ const defaultFilters: FilterForm = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function formatApiDateTime(s: string | undefined): string {
-  if (!s) return ""
-  const d = new Date(s)
-  if (Number.isNaN(d.getTime())) return s
-  const pad = (n: number) => String(n).padStart(2, "0")
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-}
+const formatApiDateTime = formatDateTime
 
 function mapScriptFromApi(raw: Record<string, unknown>): ScriptRow {
   const book = raw.book as { bookId?: string | number } | undefined
@@ -158,219 +157,6 @@ function ScriptTypeSelector({ value, onChange }: { value: string; onChange: (v: 
         )}
       </div>
     </div>
-  )
-}
-
-// ─── Drawer: 发布制作任务 ─────────────────────────────────────────────────────
-
-const artStyleOptions = ["解说漫", "动画漫", "沙雕漫", "仿真人剧"]
-const visualEffectOptions = ["2D", "3D", "仿真人"]
-const aspectRatioOptions = ["横屏 16:9", "竖屏 9:16"]
-
-function RadioGroup({
-  label,
-  options,
-  value,
-  onChange,
-  required,
-  error,
-}: {
-  label: string
-  options: string[]
-  value: string
-  onChange: (v: string) => void
-  required?: boolean
-  error?: boolean
-}) {
-  return (
-    <div>
-      <p className="mb-2 text-[13px] font-medium text-[#374151]">
-        {label}
-        {required && <span className="ml-0.5 text-[#f04438]">*</span>}
-      </p>
-      <div className="flex flex-wrap gap-2">
-        {options.map((opt) => {
-          const active = value === opt
-          return (
-            <button
-              key={opt}
-              type="button"
-              onClick={() => onChange(opt)}
-              className={cn(
-                "h-[30px] rounded-[4px] border px-3.5 text-[12.5px] transition-colors",
-                active
-                  ? "border-[#38c08f] bg-[#f0fdf4] font-medium text-[#38c08f]"
-                  : error
-                    ? "border-[#fca5a5] bg-white text-[#374151] hover:border-[#38c08f]"
-                    : "border-[#d1d5db] bg-white text-[#374151] hover:border-[#38c08f] hover:text-[#38c08f]"
-              )}
-            >
-              {opt}
-            </button>
-          )
-        })}
-      </div>
-      {error && <p className="mt-1 text-[11.5px] text-[#f04438]">请选择{label}</p>}
-    </div>
-  )
-}
-
-function PublishTaskDrawer({ row, onClose }: { row: ScriptRow; onClose: () => void }) {
-  const [artStyle, setArtStyle] = useState("")
-  const [visualEffect, setVisualEffect] = useState("")
-  const [aspectRatio, setAspectRatio] = useState("")
-  const [remark, setRemark] = useState("")
-  const [errors, setErrors] = useState({ artStyle: false, visualEffect: false, aspectRatio: false })
-  const [submitting, setSubmitting] = useState(false)
-
-  async function handleConfirm() {
-    const e = {
-      artStyle: !artStyle,
-      visualEffect: !visualEffect,
-      aspectRatio: !aspectRatio,
-    }
-    if (e.artStyle || e.visualEffect || e.aspectRatio) { setErrors(e); return }
-    setSubmitting(true)
-    try {
-      await scriptApi.publishTask(row.id, {
-        artStyle,
-        visualEffect,
-        aspectRatio,
-        productionRemark: remark.trim(),
-      })
-      onClose()
-      toast.success(`已发布制作任务：${artStyle} / ${visualEffect} / ${aspectRatio}`)
-    } catch (err) {
-      toast.error(err instanceof Error ? `发布失败：${err.message}` : "发布失败")
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  const infoFields = [
-    { label: "剧本名称", value: row.scriptName, mono: false },
-    { label: "剧本ID", value: row.scriptId, mono: true },
-    { label: "集数", value: String(row.episodeCount) + " 集", mono: false },
-    { label: "付费卡点", value: row.paidEpisode || "--", mono: false },
-  ]
-
-  return (
-    <>
-      <div className="fixed inset-0 bg-black/35" style={{ zIndex: 100 }} onClick={onClose} />
-      <div
-        className="fixed right-0 top-0 flex h-full w-[640px] flex-col bg-white"
-        style={{ zIndex: 101, boxShadow: "-4px 0 24px rgba(0,0,0,0.12)" }}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-[#e5e7eb] px-6 py-4">
-          <span className="text-[15px] font-semibold text-[#111827]">发布制作任务</span>
-          <button
-            onClick={onClose}
-            className="flex h-7 w-7 items-center justify-center rounded-[4px] text-[#9ca3af] hover:bg-[#f3f4f6] hover:text-[#374151] transition-colors"
-          >
-            <X size={16} />
-          </button>
-        </div>
-
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto px-6 py-5">
-
-          {/* 剧本信息卡 */}
-          <div className="mb-5 rounded-[8px] border border-[#e5e7eb] bg-[#f9fafb] px-4 py-4">
-            <p className="mb-3 text-[11.5px] font-semibold uppercase tracking-wide text-[#9ca3af]">剧本信息</p>
-            <div className="grid grid-cols-2 gap-x-6 gap-y-3">
-              {infoFields.map(({ label, value, mono }) => (
-                <div key={label}>
-                  <p className="text-[11.5px] text-[#9ca3af]">{label}</p>
-                  <p className={cn("mt-0.5 break-all text-[12.5px]", mono ? "font-mono text-[#4b5563]" : "text-[#111827]")}>
-                    {label === "类型" ? (
-                      <span className={cn(
-                        "inline-flex items-center rounded-[4px] border px-2 py-0.5 text-[11.5px] font-medium",
-                        value === "原作"
-                          ? "border-[#bfdbfe] bg-[#eff6ff] text-[#2563eb]"
-                          : "border-[#ddd6fe] bg-[#f5f3ff] text-[#7c3aed]"
-                      )}>
-                        {value}
-                      </span>
-                    ) : label === "付费卡点" && value !== "--" ? (
-                      <span className="inline-flex items-center rounded-[4px] border border-[#fde68a] bg-[#fef9ee] px-2 py-0.5 text-[11.5px] text-[#b45309]">
-                        {value}
-                      </span>
-                    ) : value}
-                  </p>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* 制作类型配置 */}
-          <div className="rounded-[8px] border border-[#e5e7eb] bg-white px-4 py-4">
-            <p className="mb-4 text-[11.5px] font-semibold uppercase tracking-wide text-[#9ca3af]">制作类型配置</p>
-            <div className="flex flex-col gap-5">
-              <RadioGroup
-                label="画风类型"
-                options={artStyleOptions}
-                value={artStyle}
-                onChange={(v) => { setArtStyle(v); setErrors((p) => ({ ...p, artStyle: false })) }}
-                required
-                error={errors.artStyle}
-              />
-              <div className="h-px bg-[#f3f4f6]" />
-              <RadioGroup
-                label="视觉效果"
-                options={visualEffectOptions}
-                value={visualEffect}
-                onChange={(v) => { setVisualEffect(v); setErrors((p) => ({ ...p, visualEffect: false })) }}
-                required
-                error={errors.visualEffect}
-              />
-              <div className="h-px bg-[#f3f4f6]" />
-              <RadioGroup
-                label="画面比例"
-                options={aspectRatioOptions}
-                value={aspectRatio}
-                onChange={(v) => { setAspectRatio(v); setErrors((p) => ({ ...p, aspectRatio: false })) }}
-                required
-                error={errors.aspectRatio}
-              />
-              <div className="h-px bg-[#f3f4f6]" />
-              <div>
-                <p className="mb-2 text-[13px] font-medium text-[#374151]">制作备注</p>
-                <textarea
-                  rows={3}
-                  placeholder="请输入制作备注（选填）"
-                  value={remark}
-                  onChange={(e) => setRemark(e.target.value)}
-                  className="w-full resize-none rounded-[6px] border border-[#d1d5db] px-3 py-2 text-[13px] text-[#374151] outline-none focus:border-[#38c08f] transition-colors"
-                />
-              </div>
-            </div>
-          </div>
-
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-between border-t border-[#e5e7eb] px-6 py-4">
-          <span className="text-[12.5px] text-[#9ca3af]">请确认配置后再发布</span>
-          <div className="flex items-center gap-2.5">
-            <button
-              onClick={onClose}
-              className="rounded-[6px] border border-[#d1d5db] bg-white px-5 py-1.5 text-[13px] text-[#374151] hover:bg-[#f9fafb] transition-colors"
-            >
-              取消
-            </button>
-            <button
-              type="button"
-              disabled={submitting}
-              onClick={() => void handleConfirm()}
-              className="rounded-[6px] bg-[#38c08f] px-5 py-1.5 text-[13px] font-medium text-white hover:bg-[#2da87a] transition-colors disabled:opacity-60"
-            >
-              确认发布
-            </button>
-          </div>
-        </div>
-      </div>
-    </>
   )
 }
 
@@ -625,10 +411,8 @@ function ScriptDetailDrawer({
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function ScriptManagement() {
-  const [filters, setFilters] = useState<FilterForm>({ ...defaultFilters })
-  const [appliedFilters, setAppliedFilters] = useState<FilterForm>({ ...defaultFilters })
-  const [currentPage, setCurrentPage] = useState(1)
-  const [pageSize, setPageSize] = useState<PageSizeOption>(10)
+  const { draft: filters, active: appliedFilters, update: setField, apply: applyFilters, reset: resetFilters } = useFilters(defaultFilters)
+  const { page: currentPage, pageSize, resetPage, paginationProps } = usePagination(10)
   const [data, setData] = useState<ScriptRow[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
@@ -688,20 +472,8 @@ export default function ScriptManagement() {
     void fetchScripts()
   }, [fetchScripts])
 
-  function setField<K extends keyof FilterForm>(key: K, value: FilterForm[K]) {
-    setFilters((prev) => ({ ...prev, [key]: value }))
-  }
-
-  function handleQuery() {
-    setAppliedFilters({ ...filters })
-    setCurrentPage(1)
-  }
-
-  function handleReset() {
-    setFilters({ ...defaultFilters })
-    setAppliedFilters({ ...defaultFilters })
-    setCurrentPage(1)
-  }
+  function handleQuery() { applyFilters(); resetPage() }
+  function handleReset() { resetFilters(); resetPage() }
 
   async function openRemakeDrawer(row: ScriptRow) {
     try {
@@ -738,7 +510,7 @@ export default function ScriptManagement() {
         originalScriptId: row.id,
       })
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "打开剧本二创失败")
+      toast.errorFrom(e, "打开剧本二创失败")
     }
   }
 
@@ -790,7 +562,7 @@ export default function ScriptManagement() {
 
         {/* Table */}
         <div className="flex-1 overflow-x-auto">
-          <table className="w-full border-collapse text-[13px]">
+          <table className="w-full min-w-[1200px] border-collapse text-[13px]">
             <thead>
               <tr className="bg-[#f9fafb]">
                 {columns.map(({ label, w, align }) => (
@@ -889,9 +661,7 @@ export default function ScriptManagement() {
         <ListPagination
           total={total}
           currentPage={currentPage}
-          pageSize={pageSize}
-          onPageChange={(p) => setCurrentPage(p)}
-          onPageSizeChange={(s) => { setPageSize(s); setCurrentPage(1) }}
+          {...paginationProps}
         />
       </div>
 
@@ -904,7 +674,11 @@ export default function ScriptManagement() {
       )}
       {publishRow && (
         <PublishTaskDrawer
-          row={publishRow}
+          scriptId={publishRow.id}
+          scriptName={publishRow.scriptName}
+          displayScriptId={publishRow.scriptId}
+          episodeCount={publishRow.episodeCount}
+          paidEpisodeLabel={publishRow.paidEpisode || "--"}
           onClose={() => setPublishRow(null)}
         />
       )}

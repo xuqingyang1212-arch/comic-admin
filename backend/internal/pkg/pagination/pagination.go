@@ -36,3 +36,19 @@ func Paginate(p Params) func(db *gorm.DB) *gorm.DB {
 		return db.Offset(p.Offset()).Limit(p.PageSize)
 	}
 }
+
+// CountAndFind counts total rows, then applies ordering + pagination and populates dest.
+// db should already have filters applied; dest must be a pointer to a slice.
+// Optional preloads can be passed as extra string arguments.
+func CountAndFind(db *gorm.DB, p Params, order string, dest any, preloads ...string) (int64, error) {
+	var total int64
+	if err := db.Count(&total).Error; err != nil {
+		return 0, err
+	}
+	q := db.Order(order).Scopes(Paginate(p))
+	for _, rel := range preloads {
+		q = q.Preload(rel)
+	}
+	err := q.Find(dest).Error
+	return total, err
+}

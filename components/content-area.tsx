@@ -3,6 +3,7 @@
 import { ChevronRight, Home } from "lucide-react"
 import { cn } from "@/lib/utils"
 import dynamic from "next/dynamic"
+import { StatusBadge, FilterInput } from "@/components/shared"
 
 function PageSkeleton() {
   return (
@@ -75,9 +76,8 @@ export default function ContentArea({ breadcrumb, selectedKey }: ContentAreaProp
       <div className="flex flex-col gap-3 rounded-lg bg-white border border-[#e5e7eb]">
         {/* Filter bar */}
         <div className="flex flex-wrap items-center gap-3 border-b border-[#e5e7eb] px-5 py-4">
-          <FilterInput label="名称" placeholder="请输入" />
-          <FilterInput label="状态" placeholder="请选择" isSelect />
-          <FilterInput label="创建人" placeholder="请输入" />
+          <FilterInput label="名称" placeholder="请输入" value="" onChange={() => {}} />
+          <FilterInput label="创建人" placeholder="请输入" value="" onChange={() => {}} />
           <div className="ml-auto flex items-center gap-2">
             <button className="flex items-center gap-1.5 rounded-[6px] bg-[#38c08f] px-4 py-1.5 text-[13px] font-medium text-white hover:bg-[#2da87a] transition-colors">
               查询
@@ -103,22 +103,22 @@ export default function ContentArea({ breadcrumb, selectedKey }: ContentAreaProp
           <table className="w-full min-w-[700px] border-collapse text-[13px]">
             <thead>
               <tr className="bg-[#f9fafb]">
-                <th className="border-b border-[#e5e7eb] px-4 py-3 text-left text-[12.5px] font-medium text-[#6b7280]">
+                <th className="border-b border-[#e5e7eb] px-4 py-3 text-left text-[12.5px] font-medium text-[#6b7280] whitespace-nowrap">
                   名称
                 </th>
-                <th className="border-b border-[#e5e7eb] px-4 py-3 text-left text-[12.5px] font-medium text-[#6b7280]">
+                <th className="border-b border-[#e5e7eb] px-4 py-3 text-left text-[12.5px] font-medium text-[#6b7280] whitespace-nowrap">
                   类型
                 </th>
-                <th className="border-b border-[#e5e7eb] px-4 py-3 text-left text-[12.5px] font-medium text-[#6b7280]">
+                <th className="border-b border-[#e5e7eb] px-4 py-3 text-left text-[12.5px] font-medium text-[#6b7280] whitespace-nowrap">
                   状态
                 </th>
-                <th className="border-b border-[#e5e7eb] px-4 py-3 text-left text-[12.5px] font-medium text-[#6b7280]">
+                <th className="border-b border-[#e5e7eb] px-4 py-3 text-left text-[12.5px] font-medium text-[#6b7280] whitespace-nowrap">
                   创建人
                 </th>
-                <th className="border-b border-[#e5e7eb] px-4 py-3 text-left text-[12.5px] font-medium text-[#6b7280]">
+                <th className="border-b border-[#e5e7eb] px-4 py-3 text-left text-[12.5px] font-medium text-[#6b7280] whitespace-nowrap">
                   创建时间
                 </th>
-                <th className="border-b border-[#e5e7eb] px-4 py-3 text-left text-[12.5px] font-medium text-[#6b7280]">
+                <th className="border-b border-[#e5e7eb] px-4 py-3 text-left text-[12.5px] font-medium text-[#6b7280] whitespace-nowrap">
                   操作
                 </th>
               </tr>
@@ -132,14 +132,14 @@ export default function ContentArea({ breadcrumb, selectedKey }: ContentAreaProp
                     i < 0 && "border-b border-[#f3f4f6]"
                   )}
                 >
-                  <td className="px-4 py-3 text-[#111827]">{row.name}</td>
-                  <td className="px-4 py-3 text-[#4b5563]">{row.type}</td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 text-[#111827] whitespace-nowrap">{row.name}</td>
+                  <td className="px-4 py-3 text-[#4b5563] whitespace-nowrap">{row.type}</td>
+                  <td className="px-4 py-3 whitespace-nowrap">
                     <StatusBadge status={row.status} />
                   </td>
-                  <td className="px-4 py-3 text-[#4b5563]">{row.creator}</td>
-                  <td className="px-4 py-3 text-[#6b7280]">{row.createdAt}</td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 text-[#4b5563] whitespace-nowrap">{row.creator}</td>
+                  <td className="px-4 py-3 text-[#6b7280] whitespace-nowrap">{row.createdAt}</td>
+                  <td className="px-4 py-3 whitespace-nowrap">
                     <div className="flex items-center gap-3">
                       <button className="text-[#38c08f] hover:text-[#2da87a] transition-colors">
                         编辑
@@ -188,53 +188,3 @@ export default function ContentArea({ breadcrumb, selectedKey }: ContentAreaProp
   )
 }
 
-function FilterInput({
-  label,
-  placeholder,
-  isSelect,
-}: {
-  label: string
-  placeholder: string
-  isSelect?: boolean
-}) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className="whitespace-nowrap text-[13px] text-[#374151]">{label}</span>
-      <div className="relative">
-        <input
-          type="text"
-          placeholder={placeholder}
-          className="h-[30px] w-[160px] rounded-[6px] border border-[#d1d5db] bg-white px-3 text-[13px] text-[#374151] placeholder-[#9ca3af] outline-none focus:border-[#38c08f] transition-colors"
-          readOnly={isSelect}
-        />
-        {isSelect && (
-          <ChevronRight
-            size={12}
-            className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rotate-90 text-[#9ca3af]"
-          />
-        )}
-      </div>
-    </div>
-  )
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const config: Record<string, { label: string; bg: string; text: string }> = {
-    active: { label: "已上线", bg: "bg-[#ecfdf5]", text: "text-[#059669]" },
-    pending: { label: "待审核", bg: "bg-[#fffbeb]", text: "text-[#d97706]" },
-    draft: { label: "草稿", bg: "bg-[#f3f4f6]", text: "text-[#6b7280]" },
-    rejected: { label: "已拒绝", bg: "bg-[#fef2f2]", text: "text-[#dc2626]" },
-  }
-  const c = config[status] ?? config.draft
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-[4px] px-2 py-0.5 text-[11.5px] font-medium",
-        c.bg,
-        c.text
-      )}
-    >
-      {c.label}
-    </span>
-  )
-}

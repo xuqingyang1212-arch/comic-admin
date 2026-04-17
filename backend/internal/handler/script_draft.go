@@ -1,9 +1,9 @@
 package handler
 
 import (
-	"strings"
 	"time"
 
+	"comic-admin/internal/consts"
 	"comic-admin/internal/middleware"
 	"comic-admin/internal/model"
 	"comic-admin/internal/pkg/pagination"
@@ -17,30 +17,21 @@ func ListScriptDrafts(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	db := model.DB.Model(&model.ScriptDraft{}).Where("writer_id = ?", userID)
 
-	if v := strings.TrimSpace(c.Query("scriptName")); v != "" {
-		db = db.Where("script_name LIKE ?", "%"+v+"%")
-	}
-	if v := strings.TrimSpace(c.Query("sourceBookId")); v != "" {
+	db = ApplyLike(db, c, "scriptName", "script_name")
+	if v := TrimQuery(c, "sourceBookId"); v != "" {
 		db = db.Where("book_id IN (SELECT id FROM books WHERE book_id = ?)", v)
 	}
-	if v := c.Query("scriptType"); v != "" {
-		db = db.Where("script_type = ?", v)
-	}
-	if v := c.Query("auditStatus"); v != "" {
-		db = db.Where("audit_status = ?", v)
-	}
-	if v := strings.TrimSpace(c.Query("originalScriptId")); v != "" {
+	db = ApplyExact(db, c, "scriptType", "script_type")
+	db = ApplyExact(db, c, "auditStatus", "audit_status")
+	if v := TrimQuery(c, "originalScriptId"); v != "" {
 		db = db.Where("original_script_id IN (SELECT id FROM scripts WHERE script_id = ?)", v)
 	}
-	if v := strings.TrimSpace(c.Query("reviewer")); v != "" {
-		db = db.Where("reviewer_id IN (SELECT id FROM users WHERE name LIKE ?)", "%"+v+"%")
+	if v := TrimQuery(c, "reviewer"); v != "" {
+		db = WhereUserNameLike(db, "reviewer_id", v)
 	}
 
-	var total int64
-	db.Count(&total)
-
 	var drafts []model.ScriptDraft
-	db.Preload("Writer").Preload("Reviewer").Order("created_at DESC").Scopes(pagination.Paginate(p)).Find(&drafts)
+	total, _ := pagination.CountAndFind(db, p, "created_at DESC", &drafts, "Writer", "Reviewer")
 
 	attachBooks(drafts)
 	attachOriginalScriptsToDrafts(drafts)
@@ -142,7 +133,7 @@ func CreateScriptDraft(c *gin.Context) {
 		BookID:            req.BookID,
 		ScriptType:        req.ScriptType,
 		OriginalScriptID:  req.OriginalScriptID,
-		AuditStatus:       "待提审",
+		AuditStatus:       consts.DraftStatusDraft,
 		WriterID:          middleware.GetUserID(c),
 		EpisodeCount:      req.EpisodeCount,
 		PayEpisode:        req.PayEpisode,
@@ -166,7 +157,7 @@ func UpdateScriptDraft(c *gin.Context) {
 		return
 	}
 
-	if draft.AuditStatus != "待提审" && draft.AuditStatus != "驳回修改" {
+	if draft.AuditStatus != consts.DraftStatusDraft && draft.AuditStatus != consts.DraftStatusRejected {
 		response.Fail(c, 400, "当前状态不可编辑")
 		return
 	}
@@ -201,16 +192,16 @@ func SubmitScriptDraft(c *gin.Context) {
 		return
 	}
 
-	if draft.AuditStatus != "待提审" && draft.AuditStatus != "驳回修改" {
+	if draft.AuditStatus != consts.DraftStatusDraft && draft.AuditStatus != consts.DraftStatusRejected {
 		response.Fail(c, 400, "当前状态不可提交")
 		return
 	}
 
-	newStatus := "待认领"
+	newStatus := consts.DraftStatusPending
 	if draft.ReviewerID != nil && *draft.ReviewerID > 0 {
-		newStatus = "审核中"
+		newStatus = consts.DraftStatusAuditing
 	}
-	res := model.DB.Model(&draft).Where("audit_status IN ?", []string{"待提审", "驳回修改"}).Update("audit_status", newStatus)
+	res := model.DB.Model(&draft).Where("audit_status IN ?", []string{consts.DraftStatusDraft, consts.DraftStatusRejected}).Update("audit_status", newStatus)
 	if res.RowsAffected == 0 {
 		response.Fail(c, 400, "该剧本已被提交，请勿重复操作")
 		return
@@ -237,12 +228,12 @@ func DeleteScriptDraft(c *gin.Context) {
 		return
 	}
 
-	if draft.AuditStatus != "待提审" {
+	if draft.AuditStatus != consts.DraftStatusDraft {
 		response.Fail(c, 400, "仅待提审状态可删除")
 		return
 	}
 
-	res := model.DB.Where("audit_status = ?", "待提审").Delete(&draft)
+	res := model.DB.Where("audit_status = ?", consts.DraftStatusDraft).Delete(&draft)
 	if res.RowsAffected == 0 {
 		response.Fail(c, 400, "状态已变更，无法删除")
 		return

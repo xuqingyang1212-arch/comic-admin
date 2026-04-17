@@ -1,8 +1,6 @@
 package handler
 
 import (
-	"strings"
-
 	"comic-admin/internal/model"
 	"comic-admin/internal/pkg/pagination"
 	"comic-admin/internal/pkg/response"
@@ -14,24 +12,15 @@ func ListUsers(c *gin.Context) {
 	p := pagination.Parse(c)
 	db := model.DB.Model(&model.User{})
 
-	if v := strings.TrimSpace(c.Query("name")); v != "" {
-		db = db.Where("name LIKE ?", "%"+v+"%")
-	}
-	if v := strings.TrimSpace(c.Query("email")); v != "" {
-		db = db.Where("email LIKE ?", "%"+v+"%")
-	}
-	if v := c.Query("status"); v != "" {
-		db = db.Where("status = ?", v)
-	}
+	db = ApplyLike(db, c, "name", "name")
+	db = ApplyLike(db, c, "email", "email")
+	db = ApplyExact(db, c, "status", "status")
 	if v := c.Query("role"); v != "" {
 		db = db.Where("id IN (SELECT user_id FROM user_roles ur JOIN roles r ON ur.role_id = r.id WHERE r.name = ?)", v)
 	}
 
-	var total int64
-	db.Count(&total)
-
 	var users []model.User
-	db.Preload("Roles").Order("created_at DESC").Scopes(pagination.Paginate(p)).Find(&users)
+	total, _ := pagination.CountAndFind(db, p, "created_at DESC", &users, "Roles")
 
 	response.OKPage(c, total, users)
 }

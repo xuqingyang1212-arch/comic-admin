@@ -3,10 +3,13 @@
 import { useState, useRef, useEffect, useCallback } from "react"
 import { Search, RotateCcw, ChevronDown, X } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { ListPagination, type PageSizeOption } from "@/components/list-pagination"
-import { FilterInput, SelectFilter, StatusBadge } from "@/components/shared"
+import { ListPagination } from "@/components/list-pagination"
+import { FilterInput, SelectFilter, StatusBadge, RightDrawer } from "@/components/shared"
 import { userApi, roleApi } from "@/lib/api"
+import { formatDateTime } from "@/lib/format"
 import { usePerm } from "@/components/admin-layout"
+import { useFilters } from "@/hooks/use-filters"
+import { usePagination } from "@/hooks/use-pagination"
 
 // ─────────────── Types ───────────────
 type UserStatus = "启用" | "禁用"
@@ -63,16 +66,7 @@ function mapApiUser(u: Record<string, unknown>): User {
   const roles: string[] = Array.isArray(rawRoles)
     ? rawRoles.map((r) => (typeof r === "string" ? r : String((r as { name?: string }).name ?? "")))
     : []
-  let createdAt = ""
-  if (u.createdAt != null) {
-    const d = new Date(String(u.createdAt))
-    if (!Number.isNaN(d.getTime())) {
-      const pad = (n: number) => String(n).padStart(2, "0")
-      createdAt = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-    } else {
-      createdAt = String(u.createdAt)
-    }
-  }
+  const createdAt = formatDateTime(u.createdAt as string | undefined)
   const st = u.status === "禁用" ? "禁用" : "启用"
   return {
     id: String(u.id ?? ""),
@@ -265,9 +259,7 @@ function UserDrawer({
   }
 
   return (
-    <>
-      <div className="fixed inset-0 z-40 bg-black/20" onClick={onClose} />
-      <div className="fixed right-0 top-0 z-50 flex h-full w-[480px] flex-col bg-white shadow-2xl">
+    <RightDrawer width={480} zIndex={50} overlayOpacity={0.2} onClose={onClose}>
         <div className="flex shrink-0 items-center justify-between border-b border-[#e5e7eb] px-6 py-4">
           <span className="text-[15px] font-semibold text-[#111827]">
             {mode === "add" ? "新增用户" : "编辑用户"}
@@ -297,8 +289,7 @@ function UserDrawer({
             确认
           </button>
         </div>
-      </div>
-    </>
+    </RightDrawer>
   )
 }
 
@@ -309,10 +300,8 @@ export default function UserManagement() {
   const [loading, setLoading] = useState(false)
   const [roleIdByName, setRoleIdByName] = useState<Map<string, number>>(new Map())
   const [roleOptions, setRoleOptions] = useState<{ label: string; value: string }[]>(roleOptionsFallback)
-  const [draftFilters, setDraftFilters] = useState<FilterForm>(defaultFilters)
-  const [activeFilters, setActiveFilters] = useState<FilterForm>(defaultFilters)
-  const [currentPage, setCurrentPage] = useState(1)
-  const [pageSize, setPageSize] = useState<PageSizeOption>(10)
+  const { draft: draftFilters, active: activeFilters, update: updateDraft, apply: applyFilters, reset: resetFilters } = useFilters(defaultFilters)
+  const { page: currentPage, pageSize, resetPage, paginationProps } = usePagination()
   const [drawerMode, setDrawerMode] = useState<"add" | "edit" | null>(null)
   const [editingUser, setEditingUser] = useState<User | null>(null)
 
@@ -371,19 +360,8 @@ export default function UserManagement() {
     void fetchUsers()
   }, [fetchUsers])
 
-  function updateDraft<K extends keyof FilterForm>(key: K, value: FilterForm[K]) {
-    setDraftFilters((prev) => ({ ...prev, [key]: value }))
-  }
-
-  function handleQuery() {
-    setActiveFilters({
-      ...draftFilters,
-      name: draftFilters.name.trim(),
-      email: draftFilters.email.trim(),
-    })
-    setCurrentPage(1)
-  }
-  function handleReset() { setDraftFilters(defaultFilters); setActiveFilters(defaultFilters); setCurrentPage(1) }
+  function handleQuery() { applyFilters(); resetPage() }
+  function handleReset() { resetFilters(); resetPage() }
 
   function openAdd() { setEditingUser(null); setDrawerMode("add") }
   function openEdit(user: User) { setEditingUser(user); setDrawerMode("edit") }
@@ -522,9 +500,7 @@ export default function UserManagement() {
         </div>
 
         <div className="shrink-0">
-          <ListPagination total={total} currentPage={currentPage} pageSize={pageSize}
-            onPageChange={(p) => setCurrentPage(p)}
-            onPageSizeChange={(s) => { setPageSize(s); setCurrentPage(1) }} />
+          <ListPagination total={total} {...paginationProps} />
         </div>
       </div>
     </div>
