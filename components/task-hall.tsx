@@ -558,7 +558,7 @@ function TaskScriptDetailDrawer({
 
         {/* 内容区：左侧正文 + 右侧信息卡 */}
         <div className="flex flex-1 overflow-hidden">
-          {/* 左侧��只��正文 */}
+          {/* 左侧只读正文 */}
           <div className="relative flex flex-1 flex-col overflow-hidden border-r border-[#e5e7eb]">
             <div ref={scrollRef} className="flex-1 overflow-y-auto bg-[#f9fafb] px-8 py-5">
               <div className="mx-auto max-w-[760px] rounded-[6px] border border-[#e5e7eb] bg-white px-8 py-6">

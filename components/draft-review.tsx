@@ -137,7 +137,7 @@ const taskTypeStyle: Record<string, { bg: string; text: string }> = {
 
 // ─── Toast (removed, using global toast) ──────────────────────────────────────
 
-// ─── 下拉单选组件 ──────────────────────────�������─────────���������������───────────────────────
+// ─── 下拉单选组件 ────────────────────────────────────────────────────────────
 
 function SelectFilter({
   value,
@@ -286,7 +286,7 @@ function RealVideoEpisodeItem({
   )
 }
 
-// ─── 图片预览 Modal ───────────────────���────────────────────────────────────────
+// ─── 图片预览 Modal ──────────────────────────────────────────────────────────
 
 function ImageGalleryModal({ images, initialIndex = 0, onClose }: { images: string[]; initialIndex?: number; onClose: () => void }) {
   const [idx, setIdx] = useState(initialIndex)
@@ -346,7 +346,7 @@ function ImageGalleryModal({ images, initialIndex = 0, onClose }: { images: stri
   )
 }
 
-// ─── 任务信息面板（初版：6字段；终版/修改版：9字段+封面图+版权材料）─────────��───
+// ─── 任务信息面板（初版：6字段；终版/修改版：9字段+封面图+版权材料）──────────
 
 function TaskInfoPanel({
   row,
@@ -604,7 +604,7 @@ function VideoListPanel({ row, type, onEpisodePlay }: {
   )
 }
 
-// ─── 审核处理��屉-左侧内容区（带 Tab）─────────────────────────────────────────
+// ─── 审核处理抽屉-左侧内容区（带 Tab）─────────────────────────────────────────
 
 function ContentAreaWithTabs({
   row,
@@ -681,7 +681,7 @@ function ContentAreaWithTabs({
   )
 }
 
-// ─── 审核详情抽屉 ───────────────────────────────────���─�����──────��─────────────────
+// ─── 审核详情抽屉 ────────────────────────────────────────────────────────────
 
 // ─── 任务详情抽屉（只读，与审核弹窗同布局，无意见区/操作按钮）─────────────────
 
@@ -801,7 +801,7 @@ function ReviewDetailDrawer({
               </span>
             </div>
 
-            {/* 悬浮"��看卡点"按钮 */}
+            {/* 悬浮"查看卡点"按钮 */}
             <div className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 z-10">
               <button
                 onClick={scrollToPaywall}
@@ -1147,7 +1147,7 @@ function ReviewActionDrawer({
   )
 }
 
-// ─── 审核记录抽屉 ��────�����─��───������─────────────��───────────────��──────────────────
+// ─── 审核记录抽屉 ────────────────────────────────────────────────────────────
 
 // ─── 审核记录抽屉辅助常量 ──────────────────────────────────────────────────────
 
@@ -1158,7 +1158,7 @@ function nowStr() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`
 }
 
-// ─── 单条审核记录卡片 ──────────────────────────────────────────��──��───────────
+// ─── 单条审核记录卡片 ──────────────────────────────────────────────────────────
 
 const AUDIT_IMAGE_LIMIT = 15
 
@@ -1337,7 +1337,7 @@ function AuditRecordCard({
   )
 }
 
-// ─── 审核记录抽屉辅助常量 ────────────────────────────────────────────────────��─
+// ─── 审核记录抽屉辅助常量 ──────────────────────────────────────────────────────
 // 任务类型 → 对应的阶段
 const taskTypeToStage: Record<TaskType, ReviewStageType> = {
   "初版审核": "初版",

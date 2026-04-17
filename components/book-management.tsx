@@ -356,7 +356,7 @@ function BookDetailDrawer({
   )
 }
 
-// ─── Script Editor Drawer ───────────────��───────────────���───���─���──────���──────���─
+// ─── Script Editor Drawer ────────────────────────────────────────────────────
 
 // 编辑器节点类型：段落 | 蓝色原书卡点（固定）| 橙色分集线（可删）
 export type EditorNode =
@@ -788,7 +788,7 @@ export function FloatingToolbar({ containerRef }: { containerRef: React.RefObjec
 
 export { bookDetailMockMap, sharedParagraphs, TRIAL_PARAGRAPH_INDEX, calcSegmentWords, calcTotalWords, calcEpisodeIndex, buildInitialNodes }
 
-// ─── ScriptEditorDrawer ──────────────────────────────────────────────��────────
+// ─── ScriptEditorDrawer ──────────────────────────────────────────────────────
 
 export type ScriptDraftPersistBody = {
   scriptName: string
@@ -1039,7 +1039,7 @@ export function ScriptEditorDrawer({
           </div>
         </div>
 
-        {/* 底部操��栏 */}
+        {/* 底部操作栏 */}
         <div className="flex items-center justify-between border-t border-[#e5e7eb] bg-white px-6 py-3.5">
           <span className="text-[13px] text-[#6b7280]">
             全文字数：<span className="font-medium text-[#111827]">{totalWords.toLocaleString()} 字</span>

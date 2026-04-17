@@ -173,7 +173,7 @@ const defaultFilters = {
   auditStatus: "待认领",
 }
 
-// ─── 审核状态色块配置 ──────────��─────����────────────────────────────────────────
+// ─── 审核状态色块配置 ─────────────────────────────────────────────────────────
 
 const auditStatusStyle: Record<string, { bg: string; text: string }> = {
   "待认领": { bg: "bg-[#eff6ff]", text: "text-[#2563eb]" },
@@ -352,7 +352,7 @@ function ApprovalProgressDrawer({
   )
 }
 
-// ─── 只读橙色分集线（复用 script-creation 的逻辑）───────────────────────────���
+// ─── 只读橙色分集线（复用 script-creation 的逻辑）─────────────────────────────
 
 function ReadonlyOrangeDivider({ nodes, nodeId }: { nodes: EditorNode[]; nodeId: string }) {
   const episodeNum = calcEpisodeIndex(nodes, nodeId)
@@ -371,7 +371,7 @@ function ReadonlyOrangeDivider({ nodes, nodeId }: { nodes: EditorNode[]; nodeId:
   )
 }
 
-// ─── 剧本详情抽屉（只读，与剧本创作保持一致）────────��───────────────���───────
+// ─── 剧本详情抽屉（只读，与剧本创作保持一致）───────────────────────────────────
 
 function ScriptDetailDrawer({
   row,
@@ -1114,7 +1114,7 @@ function ReviewFloatingToolbar({ containerRef }: { containerRef: React.RefObject
         <div className="relative">
           <button onMouseDown={(e) => { e.preventDefault(); togglePanel("fontColor") }}
             className={cn("flex h-6 w-6 flex-col items-center justify-center gap-[1px] rounded-[3px] transition-colors hover:bg-[#f3f4f6]",
-              openPanel === "fontColor" && "bg-[#f3f4f6]")} title="���体���色">
+              openPanel === "fontColor" && "bg-[#f3f4f6]")} title="字体颜色">
             <span className="text-[11px] font-bold leading-none text-[#374151]">A</span>
             <span className="h-[2.5px] w-3.5 rounded-full bg-[#ef4444]" />
           </button>
@@ -1794,7 +1794,7 @@ function MyAuditRecordDrawer({
   )
 }
 
-// ─── 我的审核 Tab ──────────────��─────────���─────────────────────────────────────
+// ─── 我的审核 Tab ────────────────────────────────────────────────────────────
 
 function MyReviewTab({
   listRefreshKey,
@@ -2089,7 +2089,7 @@ function MyReviewTab({
           />
         </div>
       </div>
-      {/* 剧本详情抽屉（复用任务大厅��� ScriptDetailDrawer） */}
+      {/* 剧本详情抽屉（复用任务大厅 ScriptDetailDrawer） */}
       {detailRow && (
         <ScriptDetailDrawer row={toScriptRow(detailRow)} onClose={() => setDetailRow(null)} />
       )}

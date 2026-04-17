@@ -423,7 +423,7 @@ function ImageGalleryModal({ images, initialIndex = 0, onClose }: { images: stri
   )
 }
 
-// ─── 视频列表面板 ───────────────────────����─────────����──────────────────────────
+// ─── 视频列表面板 ────────────────────────────────────────────────────────────
 
 function VideoListPanel({
   episodes,
@@ -595,7 +595,7 @@ function TaskInfoPanel({ row }: { row: ComicRow }) {
   )
 }
 
-// �����── 漫剧详情抽屉（三 tab：任务信息 / 有字幕视频 / 无字幕视频）���─��──────────────
+// ─── 漫剧详情抽屉（三 tab：任务信息 / 有字幕视频 / 无字幕视频）──────────────
 
 const DETAIL_TABS = [
   { key: "info", label: "剧集信息" },
@@ -1198,7 +1198,7 @@ function ImagePreview({ src, alt, onClose }: { src: string; alt: string; onClose
   )
 }
 
-// ─── 编辑抽屉 ─────────────────────────────────────────────────────���──���────────
+// ─── 编辑抽屉 ─────────────────────────────────────────────────────────────────
 
 function EditDrawer({ row, onClose }: { row: ComicRow; onClose: () => void }) {
   useEffect(() => {
@@ -1375,7 +1375,7 @@ function DateRangePicker({ value = [], onChange }: { value?: [string, string] | 
 const comicMock: ComicRow[] = []
 
 export default function ComicManagement() {
-  // 筛������单（草稿态）
+  // 筛选表单（草稿态）
   const canDetail = usePerm("resource.comic.detail")
   const canDownload = usePerm("resource.comic.download")
   const canRevise = usePerm("resource.comic.revise")
@@ -1643,7 +1643,7 @@ export default function ComicManagement() {
         <ComicDetailDrawer row={detailRow} onClose={() => setDetailRow(null)} />
       )}
 
-      {/* ��─ 发起修改抽屉 ── */}
+      {/* ─── 发起修改抽屉 ── */}
       {changeRow && (
         <RequestChangeDrawer row={changeRow} onClose={() => setChangeRow(null)} />
       )}

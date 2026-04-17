@@ -1054,7 +1054,7 @@ function EpisodeVideoListWithProgress({
   )
 }
 
-// ─── useEpisodeVideoGroup ───────────────��──────────────────────────────��──────
+// ─── useEpisodeVideoGroup ────────────────────────────────────────────────────
 // Reusable hook for one episode-video group (有字幕 or 无字幕)
 
 function useEpisodeVideoGroup(episodeCount: number) {
@@ -1124,7 +1124,7 @@ function useEpisodeVideoGroup(episodeCount: number) {
   return { videos, unmatched, setVideo, clearVideo, handleBatch }
 }
 
-// ─── UploadDrawer (main) ────────────────────────────────────────────���─────�����───
+// ─── UploadDrawer (main) ─────────────────────────────────────────────────────
 
 function UploadDrawer({
   uploadType, row, onClose, onSubmitSuccess,
@@ -1716,7 +1716,7 @@ function UploadDrawer({
   )
 }
 
-// ─── Main Component ───────────────────────────────────────────────������──────────
+// ─── Main Component ──────────────────────────────────────────────────────────
 
 const myTaskMock: MyTaskRow[] = []
 
