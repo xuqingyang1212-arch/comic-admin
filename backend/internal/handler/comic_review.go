@@ -14,15 +14,34 @@ import (
 	"comic-admin/internal/pkg/response"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func ListComicReviewTasks(c *gin.Context) {
 	p := pagination.Parse(c)
 	userID := middleware.GetUserID(c)
-	db := model.DB.Model(&model.ReviewTask{}).Where("reviewer_id = ?", userID)
+	scope := c.Query("scope")
+
+	db := model.DB.Model(&model.ReviewTask{})
+
+	if scope == "participated" {
+		// 我参与的审核：根据审核日志反查用户以审核人身份处理过的制作任务（包含待提审等中间态）
+		db = db.Where("production_task_id IN (?)",
+			model.DB.Model(&model.ReviewAuditLog{}).
+				Select("DISTINCT production_task_id").
+				Where("operator_id = ? AND action IN ?", userID,
+					[]string{consts.ActionApproved, consts.ActionRejected}))
+	} else {
+		// 待我审核：仅展示当前归属且审核中的任务
+		db = db.
+			Where("reviewer_id = ?", userID).
+			Where("review_status = ?", consts.ReviewStatusAuditing)
+	}
 
 	db = ApplyExact(db, c, "taskType", "task_type")
-	db = ApplyExact(db, c, "reviewStatus", "review_status")
+	if scope == "participated" {
+		db = ApplyExact(db, c, "reviewStatus", "review_status")
+	}
 	if v := TrimQuery(c, "taskName"); v != "" {
 		db = db.Where("production_task_id IN (SELECT id FROM production_tasks WHERE task_name LIKE ?)", "%"+v+"%")
 	}
@@ -38,6 +57,19 @@ func ListComicReviewTasks(c *gin.Context) {
 	var tasks []model.ReviewTask
 	total, _ := pagination.CountAndFind(db, p, "created_at DESC", &tasks,
 		"ProductionTask", "ProductionTask.Producer", "Reviewer")
+
+	scriptIDs := make([]int64, 0, len(tasks))
+	for _, t := range tasks {
+		if pt := t.ProductionTask; pt != nil && pt.ScriptID != 0 {
+			scriptIDs = append(scriptIDs, pt.ScriptID)
+		}
+	}
+	scriptMap := BatchLoadScripts(scriptIDs)
+	for i := range tasks {
+		if pt := tasks[i].ProductionTask; pt != nil {
+			tasks[i].ProductionTask.Script = scriptMap[pt.ScriptID]
+		}
+	}
 
 	response.OKPage(c, total, tasks)
 }
@@ -87,8 +119,12 @@ func GetComicReviewTask(c *gin.Context) {
 
 	if task.ProductionTask != nil {
 		stageType := strings.TrimSuffix(task.TaskType, "审核")
+		deliveryType := stageType
+		if deliveryType == consts.StageSecondReview {
+			deliveryType = consts.StageFinal
+		}
 		var delivery model.TaskDelivery
-		if model.DB.Where("task_id = ? AND delivery_type = ?", task.ProductionTaskID, stageType).
+		if model.DB.Where("task_id = ? AND delivery_type = ?", task.ProductionTaskID, deliveryType).
 			Order("created_at DESC").First(&delivery).Error == nil {
 			var files []model.TaskDeliveryFile
 			model.DB.Where("delivery_id = ?", delivery.ID).Find(&files)
@@ -117,14 +153,19 @@ func ReviewComicTask(c *gin.Context) {
 		return
 	}
 	var req ComicReviewReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.FailBadRequest(c, "参数错误")
+	if !BindOrFail(c, &req) {
 		return
 	}
 
 	var reviewTask model.ReviewTask
 	if err := model.DB.First(&reviewTask, id).Error; err != nil {
 		response.FailNotFound(c, "审核任务不存在")
+		return
+	}
+
+	userID := middleware.GetUserID(c)
+	if reviewTask.ReviewerID == nil || *reviewTask.ReviewerID != userID {
+		response.Fail(c, 403, "您不是当前审核人，无法操作")
 		return
 	}
 
@@ -151,14 +192,14 @@ func ReviewComicTask(c *gin.Context) {
 	model.DB.First(&task, reviewTask.ProductionTaskID)
 
 	// Uniqueness check BEFORE any state mutation
-	if req.Result == "审核通过" && (reviewTask.TaskType == "终版审核" || reviewTask.TaskType == "修改版审核") {
+	if req.Result == consts.ReviewStatusApproved && (reviewTask.TaskType == consts.ReviewTypeFinal || reviewTask.TaskType == consts.ReviewTypeSecondReview || reviewTask.TaskType == consts.ReviewTypeRevision) {
 		epName := req.EpisodeName
 		if epName == "" {
 			epName = reviewTask.EpisodeName
 		}
 		if epName != "" {
 			dupQuery := model.DB.Model(&model.Comic{}).Where("episode_name = ?", epName)
-			if reviewTask.TaskType == "修改版审核" && task.ComicID != nil {
+			if reviewTask.TaskType == consts.ReviewTypeRevision && task.ComicID != nil {
 				dupQuery = dupQuery.Where("id != ?", *task.ComicID)
 			}
 			var dupCnt int64
@@ -170,79 +211,148 @@ func ReviewComicTask(c *gin.Context) {
 		}
 	}
 
-	userID := middleware.GetUserID(c)
-
-	// Atomic CAS: only update if status is still consts.ReviewStatusAuditing
-	casRes := model.DB.Model(&reviewTask).Where("review_status = ?", consts.ReviewStatusAuditing).Updates(map[string]any{
-		"review_status": req.Result,
-		"episode_name":  req.EpisodeName,
-	})
-	if casRes.RowsAffected == 0 {
-		response.Fail(c, 400, "该任务已被处理，请勿重复操作")
-		return
-	}
-
-	// Replace opinions (clear old saved drafts first)
-	model.DB.Where("review_task_id = ?", id).Delete(&model.ReviewOpinion{})
-	for i, op := range req.Opinions {
-		if strings.TrimSpace(op.Content) == "" && len(op.Images) == 0 {
-			continue
-		}
-		model.DB.Create(&model.ReviewOpinion{
-			ReviewTaskID: id,
-			Content:      op.Content,
-			Images:       op.Images,
-			SortOrder:    i,
-		})
-	}
-
 	// Snapshot opinions for audit log
 	snapshot, _ := json.Marshal(req.Opinions)
 	snapshotStr := string(snapshot)
 
 	stageType := strings.TrimSuffix(reviewTask.TaskType, "审核")
 
-	if req.Result == "审核通过" {
-		switch reviewTask.TaskType {
-		case "初版审核":
-			model.DB.Model(&task).Update("task_progress", consts.TaskProgressFinalDraft)
-		case "终版审核":
-			model.DB.Model(&task).Update("task_progress", consts.TaskProgressCompleted)
-			createComicFromTask(&task, &reviewTask)
-		case "修改版审核":
-			model.DB.Model(&task).Update("task_progress", consts.TaskProgressCompleted)
-			updateComicFromTask(&task, &reviewTask)
+	txErr := model.DB.Transaction(func(tx *gorm.DB) error {
+		// Atomic CAS: only update if status is still consts.ReviewStatusAuditing
+		casRes := tx.Model(&reviewTask).Where("review_status = ?", consts.ReviewStatusAuditing).Updates(map[string]any{
+			"review_status": req.Result,
+			"episode_name":  req.EpisodeName,
+		})
+		if casRes.Error != nil {
+			return casRes.Error
 		}
-	} else {
-		// 驳回修改 -> return to production
-		switch reviewTask.TaskType {
-		case "初版审核":
-			model.DB.Model(&task).Update("task_progress", consts.TaskProgressFirstDraft)
-		case "终版审核":
-			model.DB.Model(&task).Update("task_progress", consts.TaskProgressFinalDraft)
-		case "修改版审核":
-			model.DB.Model(&task).Update("task_progress", consts.TaskProgressRevision)
+		if casRes.RowsAffected == 0 {
+			return errConflict
 		}
-	}
 
-	model.DB.Create(&model.ReviewAuditLog{
-		ProductionTaskID: task.ID,
-		Action:           req.Result,
-		StageType:        stageType,
-		OperatorID:       userID,
-		OpinionSnapshot:  &snapshotStr,
-		CreatedAt:        time.Now(),
+		// Replace opinions (clear old saved drafts first)
+		if err := tx.Where("review_task_id = ?", id).Delete(&model.ReviewOpinion{}).Error; err != nil {
+			return err
+		}
+		for i, op := range req.Opinions {
+			if strings.TrimSpace(op.Content) == "" && len(op.Images) == 0 {
+				continue
+			}
+			if err := tx.Create(&model.ReviewOpinion{
+				ReviewTaskID: id,
+				Content:      op.Content,
+				Images:       op.Images,
+				SortOrder:    i,
+			}).Error; err != nil {
+				return err
+			}
+		}
+
+		if req.Result == consts.ReviewStatusApproved {
+			switch reviewTask.TaskType {
+			case consts.ReviewTypeFirst:
+				if err := tx.Model(&reviewTask).Update("review_status", consts.ReviewStatusPendingSubmit).Error; err != nil {
+					return err
+				}
+				if err := tx.Model(&task).Update("task_progress", consts.TaskProgressFinalDraft).Error; err != nil {
+					return err
+				}
+			case consts.ReviewTypeFinal:
+				if needSecondReviewTx(tx, userID) {
+					var reviewer model.User
+					if err := tx.First(&reviewer, userID).Error; err != nil {
+						return err
+					}
+					if err := tx.Model(&reviewTask).Updates(map[string]any{
+						"task_type":     consts.ReviewTypeSecondReview,
+						"review_status": consts.ReviewStatusAuditing,
+						"reviewer_id":   reviewer.ReviewerID,
+					}).Error; err != nil {
+						return err
+					}
+					if err := tx.Model(&task).Update("task_progress", consts.TaskProgressSecondReview).Error; err != nil {
+						return err
+					}
+				} else {
+					if err := tx.Model(&task).Update("task_progress", consts.TaskProgressCompleted).Error; err != nil {
+						return err
+					}
+					if err := createComicFromTaskTx(tx, &task, &reviewTask); err != nil {
+						return err
+					}
+				}
+			case consts.ReviewTypeSecondReview:
+				if err := tx.Model(&task).Update("task_progress", consts.TaskProgressCompleted).Error; err != nil {
+					return err
+				}
+				if err := createComicFromTaskTx(tx, &task, &reviewTask); err != nil {
+					return err
+				}
+			case consts.ReviewTypeRevision:
+				if err := tx.Model(&task).Update("task_progress", consts.TaskProgressCompleted).Error; err != nil {
+					return err
+				}
+				if err := updateComicFromTaskTx(tx, &task, &reviewTask); err != nil {
+					return err
+				}
+			}
+		} else {
+			switch reviewTask.TaskType {
+			case consts.ReviewTypeFirst:
+				if err := tx.Model(&task).Update("task_progress", consts.TaskProgressFirstDraft).Error; err != nil {
+					return err
+				}
+			case consts.ReviewTypeFinal, consts.ReviewTypeSecondReview:
+				if err := tx.Model(&task).Update("task_progress", consts.TaskProgressFinalDraft).Error; err != nil {
+					return err
+				}
+			case consts.ReviewTypeRevision:
+				if err := tx.Model(&task).Update("task_progress", consts.TaskProgressRevision).Error; err != nil {
+					return err
+				}
+			}
+		}
+
+		return tx.Create(&model.ReviewAuditLog{
+			ProductionTaskID: task.ID,
+			Action:           req.Result,
+			StageType:        stageType,
+			OperatorID:       userID,
+			OpinionSnapshot:  &snapshotStr,
+			CreatedAt:        time.Now(),
+		}).Error
 	})
+
+	if txErr != nil {
+		if txErr == errConflict {
+			response.Fail(c, 400, "该任务已被处理，请勿重复操作")
+			return
+		}
+		response.Fail(c, 500, "审核失败，请重试")
+		return
+	}
 
 	response.OKMsg(c, "审核完成")
 }
 
-func createComicFromTask(task *model.ProductionTask, reviewTask *model.ReviewTask) {
+func needSecondReviewTx(tx *gorm.DB, reviewerUserID int64) bool {
+	var reviewer model.User
+	if tx.First(&reviewer, reviewerUserID).Error != nil {
+		return false
+	}
+	return reviewer.ReviewerID != nil && *reviewer.ReviewerID > 0
+}
+
+func createComicFromTaskTx(tx *gorm.DB, task *model.ProductionTask, reviewTask *model.ReviewTask) error {
 	var delivery model.TaskDelivery
-	model.DB.Where("task_id = ? AND delivery_type = ?", task.ID, consts.StageFinal).Preload("Files").Order("created_at DESC").First(&delivery)
+	if err := tx.Where("task_id = ? AND delivery_type = ?", task.ID, consts.StageFinal).Preload("Files").Order("created_at DESC").First(&delivery).Error; err != nil {
+		return err
+	}
 
 	var script model.Script
-	model.DB.First(&script, task.ScriptID)
+	if err := tx.First(&script, task.ScriptID).Error; err != nil {
+		return err
+	}
 
 	comic := model.Comic{
 		ComicID:      idgen.NextID(),
@@ -260,59 +370,77 @@ func createComicFromTask(task *model.ProductionTask, reviewTask *model.ReviewTas
 
 	var copyrights []string
 	for _, f := range delivery.Files {
-		if f.FileType == "版权证明" {
+		if f.FileType == consts.FileTypeCopyright {
 			copyrights = append(copyrights, f.FileURL)
 		}
 	}
 	comic.CopyrightImages = copyrights
 
-	model.DB.Create(&comic)
+	if err := tx.Create(&comic).Error; err != nil {
+		return err
+	}
 
 	for _, f := range delivery.Files {
-		if f.FileType == "有字幕视频" {
-			model.DB.Create(&model.ComicEpisode{
+		if f.FileType == consts.FileTypeWithSubtitle {
+			if err := tx.Create(&model.ComicEpisode{
 				ComicID:      comic.ID,
 				EpisodeNum:   f.EpisodeNum,
 				SubtitledURL: f.FileURL,
 				FileSize:     f.FileSize,
-			})
+			}).Error; err != nil {
+				return err
+			}
 		}
 	}
 	for _, f := range delivery.Files {
-		if f.FileType == "无字幕视频" {
-			model.DB.Model(&model.ComicEpisode{}).
+		if f.FileType == consts.FileTypeNoSubtitle {
+			if err := tx.Model(&model.ComicEpisode{}).
 				Where("comic_id = ? AND episode_num = ?", comic.ID, f.EpisodeNum).
-				Update("raw_url", f.FileURL)
+				Update("raw_url", f.FileURL).Error; err != nil {
+				return err
+			}
 		}
 	}
+	return nil
 }
 
-func updateComicFromTask(task *model.ProductionTask, reviewTask *model.ReviewTask) {
+func updateComicFromTaskTx(tx *gorm.DB, task *model.ProductionTask, reviewTask *model.ReviewTask) error {
 	if task.ComicID == nil {
-		return
+		return nil
 	}
 	var delivery model.TaskDelivery
-	model.DB.Where("task_id = ? AND delivery_type = ?", task.ID, consts.StageRevision).Preload("Files").Order("created_at DESC").First(&delivery)
+	if err := tx.Where("task_id = ? AND delivery_type = ?", task.ID, consts.StageRevision).Preload("Files").Order("created_at DESC").First(&delivery).Error; err != nil {
+		return err
+	}
 
 	if delivery.CoverURL != "" {
-		model.DB.Model(&model.Comic{}).Where("id = ?", *task.ComicID).Update("cover_url", delivery.CoverURL)
+		if err := tx.Model(&model.Comic{}).Where("id = ?", *task.ComicID).Update("cover_url", delivery.CoverURL).Error; err != nil {
+			return err
+		}
 	}
 	if reviewTask.EpisodeName != "" {
-		model.DB.Model(&model.Comic{}).Where("id = ?", *task.ComicID).Update("episode_name", reviewTask.EpisodeName)
+		if err := tx.Model(&model.Comic{}).Where("id = ?", *task.ComicID).Update("episode_name", reviewTask.EpisodeName).Error; err != nil {
+			return err
+		}
 	}
 
 	for _, f := range delivery.Files {
 		switch f.FileType {
-		case "有字幕视频":
-			model.DB.Model(&model.ComicEpisode{}).
+		case consts.FileTypeWithSubtitle:
+			if err := tx.Model(&model.ComicEpisode{}).
 				Where("comic_id = ? AND episode_num = ?", *task.ComicID, f.EpisodeNum).
-				Update("subtitled_url", f.FileURL)
-		case "无字幕视频":
-			model.DB.Model(&model.ComicEpisode{}).
+				Update("subtitled_url", f.FileURL).Error; err != nil {
+				return err
+			}
+		case consts.FileTypeNoSubtitle:
+			if err := tx.Model(&model.ComicEpisode{}).
 				Where("comic_id = ? AND episode_num = ?", *task.ComicID, f.EpisodeNum).
-				Update("raw_url", f.FileURL)
+				Update("raw_url", f.FileURL).Error; err != nil {
+				return err
+			}
 		}
 	}
+	return nil
 }
 
 func SaveComicReviewDraft(c *gin.Context) {
@@ -324,8 +452,19 @@ func SaveComicReviewDraft(c *gin.Context) {
 		Opinions    []ReviewOpinionReq `json:"opinions"`
 		EpisodeName string             `json:"episodeName"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.FailBadRequest(c, "参数错误")
+	if !BindOrFail(c, &req) {
+		return
+	}
+
+	var reviewTask model.ReviewTask
+	if err := model.DB.First(&reviewTask, id).Error; err != nil {
+		response.FailNotFound(c, "审核任务不存在")
+		return
+	}
+
+	userID := middleware.GetUserID(c)
+	if reviewTask.ReviewerID == nil || *reviewTask.ReviewerID != userID {
+		response.Fail(c, 403, "您不是当前审核人，无法操作")
 		return
 	}
 
@@ -360,20 +499,22 @@ func ListComicReviewLogs(c *gin.Context) {
 		return
 	}
 
-	stageType := strings.TrimSuffix(reviewTask.TaskType, "审核")
-
+	// Since production task : review task is 1:1, both audit-record views show the
+	// same full timeline (including 发布任务/领取任务). The frontend handles stage
+	// filtering (制作 vs 修改) uniformly.
 	var logs []model.ReviewAuditLog
-	model.DB.Where("production_task_id = ? AND stage_type = ? AND action != ?",
-		reviewTask.ProductionTaskID, stageType, consts.ActionClaimTask).
+	model.DB.Where("production_task_id = ?", reviewTask.ProductionTaskID).
 		Order("created_at ASC").Find(&logs)
 
-	for i := range logs {
-		if logs[i].OperatorID != 0 {
-			var op model.User
-			if model.DB.First(&op, logs[i].OperatorID).Error == nil {
-				logs[i].Operator = &op
-			}
+	opIDs := make([]int64, 0, len(logs))
+	for _, l := range logs {
+		if l.OperatorID != 0 {
+			opIDs = append(opIDs, l.OperatorID)
 		}
+	}
+	opMap := BatchLoadUsers(opIDs)
+	for i := range logs {
+		logs[i].Operator = opMap[logs[i].OperatorID]
 	}
 
 	response.OK(c, logs)

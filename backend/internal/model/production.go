@@ -31,8 +31,8 @@ type ProductionTask struct {
 
 type TaskDelivery struct {
 	ID           int64     `gorm:"primaryKey;autoIncrement" json:"id"`
-	TaskID       int64     `gorm:"index;not null" json:"taskId"`
-	DeliveryType string    `gorm:"size:16;not null" json:"deliveryType"` // 初版 | 终版 | 修改版
+	TaskID       int64     `gorm:"not null;index:idx_td_task_type" json:"taskId"`
+	DeliveryType string    `gorm:"size:16;not null;index:idx_td_task_type" json:"deliveryType"` // 全集 | 分集 | 返修版
 	EpisodeName  string    `gorm:"size:255" json:"episodeName"`
 	CoverURL     string    `gorm:"size:512" json:"coverUrl,omitempty"`
 	CreatedAt    time.Time `json:"createdAt"`
@@ -43,7 +43,7 @@ type TaskDelivery struct {
 type TaskDeliveryFile struct {
 	ID         int64     `gorm:"primaryKey;autoIncrement" json:"id"`
 	DeliveryID int64     `gorm:"index;not null" json:"deliveryId"`
-	FileType   string    `gorm:"size:16;not null" json:"fileType"` // 初版视频 | 有字幕视频 | 无字幕视频 | 封面图 | 版权证明
+	FileType   string    `gorm:"size:16;not null" json:"fileType"` // 全集视频 | 有字幕视频 | 无字幕视频 | 封面图 | 版权证明
 	EpisodeNum int       `gorm:"default:0" json:"episodeNum"`
 	FileURL    string    `gorm:"size:512;not null" json:"fileUrl"`
 	FileName   string    `gorm:"size:255" json:"fileName"`

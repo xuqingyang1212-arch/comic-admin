@@ -1,15 +1,16 @@
 import { useState, useCallback, useMemo } from "react"
 
-function emptyOf<T extends Record<string, unknown>>(shape: T): T {
-  const empty = {} as Record<string, unknown>
-  for (const key in shape) {
-    const val = shape[key]
+function emptyOf<T extends object>(shape: T): T {
+  const empty: Record<string, unknown> = {}
+  const src = shape as unknown as Record<string, unknown>
+  for (const key in src) {
+    const val = src[key]
     empty[key] = Array.isArray(val) ? [] : typeof val === "number" ? 0 : ""
   }
   return empty as T
 }
 
-export function useFilters<T extends Record<string, unknown>>(initialFilters: T) {
+export function useFilters<T extends object>(initialFilters: T) {
   const [draft, setDraft] = useState<T>(initialFilters)
   const [active, setActive] = useState<T>(initialFilters)
 
@@ -20,10 +21,7 @@ export function useFilters<T extends Record<string, unknown>>(initialFilters: T)
   }, [])
 
   const apply = useCallback(() => {
-    setActive((prev) => {
-      const next = { ...draft }
-      return JSON.stringify(prev) === JSON.stringify(next) ? prev : next
-    })
+    setActive({ ...draft })
   }, [draft])
 
   const reset = useCallback(() => {

@@ -80,8 +80,6 @@ function mapApiRole(r: Record<string, unknown>): Role {
   }
 }
 
-const roleMock: Role[] = []
-
 const DEFAULT_FILTERS: FilterForm = { name: "" }
 const DEFAULT_FORM: RoleForm = { name: "", remark: "", permissions: [] }
 
@@ -432,7 +430,7 @@ export default function RoleManagement() {
                   { label: "角色名称", w: "w-[140px]" },
                   { label: "备注",     w: "w-[260px]" },
                   { label: "用户",     w: ""           },
-                  { label: "操作",     w: "w-[80px]"   },
+                  { label: "操作",     w: "w-[180px]"  },
                 ].map(({ label, w }) => (
                   <th key={label}
                     className={cn("sticky top-0 z-10 border-b border-[#e5e7eb] bg-[#f9fafb] px-4 py-3 text-left text-[12.5px] font-medium text-[#6b7280] whitespace-nowrap", w)}>
@@ -468,14 +466,38 @@ export default function RoleManagement() {
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">{userDisplay}</td>
                     <td className="px-4 py-3 whitespace-nowrap">
-                      {canEdit && (
+                      <div className="flex items-center gap-2">
+                        {canEdit && (
+                          <button
+                            onClick={() => openEdit(row)}
+                            className="flex h-[26px] items-center rounded-[4px] border border-[#d1d5db] bg-white px-2.5 text-[12px] text-[#374151] transition-colors hover:border-[#38c08f] hover:text-[#38c08f]"
+                          >
+                            编辑
+                          </button>
+                        )}
                         <button
-                          onClick={() => openEdit(row)}
-                          className="flex h-[26px] items-center rounded-[4px] border border-[#d1d5db] bg-white px-2.5 text-[12px] text-[#374151] transition-colors hover:border-[#38c08f] hover:text-[#38c08f]"
+                          onClick={async () => {
+                            try {
+                              const res = await roleApi.inviteCode(Number(row.id))
+                              const link = `${window.location.origin}/register?invite=${encodeURIComponent(res.code)}`
+                              const ta = document.createElement("textarea")
+                              ta.value = link
+                              ta.style.position = "fixed"
+                              ta.style.left = "-9999px"
+                              document.body.appendChild(ta)
+                              ta.select()
+                              document.execCommand("copy")
+                              document.body.removeChild(ta)
+                              toast.success("邀请链接已复制到剪贴板")
+                            } catch {
+                              toast.error("获取邀请链接失败")
+                            }
+                          }}
+                          className="flex h-[26px] items-center rounded-[4px] border border-[#38c08f] bg-white px-2.5 text-[12px] text-[#38c08f] transition-colors hover:bg-[#f0fdf4]"
                         >
-                          编辑
+                          复制邀请链接
                         </button>
-                      )}
+                      </div>
                     </td>
                   </tr>
                 )

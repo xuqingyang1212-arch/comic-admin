@@ -29,14 +29,18 @@ func SetupRouter(mode string) *gin.Engine {
 
 	// Public routes
 	api.POST("/auth/login", AuthLogin)
+	api.POST("/auth/register", AuthRegister)
+	api.POST("/auth/check-email", AuthCheckEmail)
+	api.POST("/auth/reset-password", AuthResetPassword)
+	api.GET("/auth/invite-info", GetInviteInfo)
 	api.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
 	perm := middleware.RequirePerm
 
-	// Protected routes — global dedup middleware prevents double-submit within 3s window
-	auth := api.Group("", middleware.JWTAuth(), middleware.LoadPermissions(model.DB), middleware.PreventDuplicateSubmit(3*time.Second))
+	// Protected routes — session guard enforces single-device login; dedup prevents double-submit
+	auth := api.Group("", middleware.JWTAuth(), middleware.SessionGuard(), middleware.LoadPermissions(model.DB), middleware.PreventDuplicateSubmit(3*time.Second))
 	{
 		// --- User Management ---
 		auth.GET("/users/me", GetCurrentUser)
@@ -47,11 +51,12 @@ func SetupRouter(mode string) *gin.Engine {
 		auth.GET("/roles", perm("system.role.list"), ListRoles)
 		auth.POST("/roles", perm("system.role.add"), CreateRole)
 		auth.PUT("/roles/:id", perm("system.role.edit"), UpdateRole)
+		auth.GET("/roles/:id/invite-code", perm("system.role.list"), GetRoleInviteCode)
 		auth.GET("/permissions/tree", GetPermissionTree)
 
 		// --- Books ---
 		auth.GET("/books", perm("resource.book.list"), ListBooks)
-		auth.GET("/books/:id", perm("resource.book.detail"), GetBook)
+		auth.GET("/books/:id", GetBook)
 
 		// --- Script Drafts (creation) ---
 		auth.GET("/script-drafts", perm("scriptCreate.list"), ListScriptDrafts)
@@ -60,7 +65,7 @@ func SetupRouter(mode string) *gin.Engine {
 		auth.PUT("/script-drafts/:id", perm("scriptCreate.edit"), UpdateScriptDraft)
 		auth.POST("/script-drafts/:id/submit", perm("scriptCreate.edit"), SubmitScriptDraft)
 		auth.DELETE("/script-drafts/:id", perm("scriptCreate.delete"), DeleteScriptDraft)
-		auth.GET("/script-drafts/:id/audit-logs", perm("scriptCreate.log"), ListScriptAuditLogs)
+		auth.GET("/script-drafts/:id/audit-logs", ListScriptAuditLogs)
 
 		// --- Script Audit ---
 		auth.GET("/script-audit/hall", perm("review.script.hall_list"), ListScriptAuditHall)
@@ -103,6 +108,10 @@ func SetupRouter(mode string) *gin.Engine {
 		auth.GET("/download/tasks", perm("resource.comic.download"), ListDownloadTasks)
 		auth.GET("/download/tasks/:id/url", GetDownloadURL)
 		auth.POST("/download/tasks/:id/retry", RetryDownloadTask)
+
+		// --- Register Review ---
+		auth.GET("/register-reviews", perm("system.registerReview.list"), ListRegisterReviews)
+		auth.POST("/register-reviews/:id/review", perm("system.registerReview.review"), ReviewRegistration)
 
 		// --- Upload ---
 		auth.POST("/upload/presign", GetPresignURL)

@@ -32,9 +32,9 @@ type ScriptDraft struct {
 	BookID           int64     `gorm:"index" json:"bookId"`
 	ScriptType       string    `gorm:"size:16;not null" json:"scriptType"`
 	OriginalScriptID *int64    `gorm:"index" json:"originalScriptId,omitempty"`
-	AuditStatus      string    `gorm:"size:16;not null;default:待提审" json:"auditStatus"`
+	AuditStatus      string    `gorm:"size:16;not null;default:待提审;index:idx_sd_reviewer_status" json:"auditStatus"`
 	WriterID         int64     `gorm:"index" json:"writerId"`
-	ReviewerID       *int64    `gorm:"index" json:"reviewerId,omitempty"`
+	ReviewerID       *int64    `gorm:"index:idx_sd_reviewer_status" json:"reviewerId,omitempty"`
 	AuditOpinion     string    `gorm:"type:text" json:"auditOpinion,omitempty"`
 	EpisodeCount     int       `gorm:"default:0" json:"episodeCount"`
 	PayEpisode       string    `gorm:"size:32" json:"payEpisode,omitempty"`

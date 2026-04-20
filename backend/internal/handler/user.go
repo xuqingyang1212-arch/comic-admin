@@ -6,6 +6,7 @@ import (
 	"comic-admin/internal/pkg/response"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func ListUsers(c *gin.Context) {
@@ -20,14 +21,15 @@ func ListUsers(c *gin.Context) {
 	}
 
 	var users []model.User
-	total, _ := pagination.CountAndFind(db, p, "created_at DESC", &users, "Roles")
+	total, _ := pagination.CountAndFind(db, p, "created_at DESC", &users, "Roles", "Reviewer")
 
 	response.OKPage(c, total, users)
 }
 
 type UpdateUserReq struct {
-	RoleIDs []int64 `json:"roleIds"`
-	Status  string  `json:"status"`
+	RoleIDs    []int64 `json:"roleIds"`
+	Status     string  `json:"status"`
+	ReviewerID *int64  `json:"reviewerId"`
 }
 
 func UpdateUser(c *gin.Context) {
@@ -36,8 +38,7 @@ func UpdateUser(c *gin.Context) {
 		return
 	}
 	var req UpdateUserReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.FailBadRequest(c, "参数错误")
+	if !BindOrFail(c, &req) {
 		return
 	}
 
@@ -47,16 +48,39 @@ func UpdateUser(c *gin.Context) {
 		return
 	}
 
+	updates := map[string]interface{}{}
 	if req.Status != "" {
-		model.DB.Model(&user).Update("status", req.Status)
+		updates["status"] = req.Status
+	}
+	if req.ReviewerID != nil {
+		if *req.ReviewerID == 0 {
+			updates["reviewer_id"] = nil
+		} else {
+			updates["reviewer_id"] = *req.ReviewerID
+		}
 	}
 
-	// Update roles
-	model.DB.Where("user_id = ?", id).Delete(&model.UserRole{})
-	for _, roleID := range req.RoleIDs {
-		model.DB.Create(&model.UserRole{UserID: id, RoleID: roleID})
+	txErr := model.DB.Transaction(func(tx *gorm.DB) error {
+		if len(updates) > 0 {
+			if err := tx.Model(&user).Updates(updates).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Where("user_id = ?", id).Delete(&model.UserRole{}).Error; err != nil {
+			return err
+		}
+		for _, roleID := range req.RoleIDs {
+			if err := tx.Create(&model.UserRole{UserID: id, RoleID: roleID}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if txErr != nil {
+		response.FailServer(c, "更新用户失败")
+		return
 	}
 
-	model.DB.Preload("Roles").First(&user, id)
+	model.DB.Preload("Roles").Preload("Reviewer").First(&user, id)
 	response.OK(c, user)
 }

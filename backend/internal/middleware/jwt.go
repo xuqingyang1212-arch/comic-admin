@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"strings"
 	"time"
 
@@ -12,16 +14,24 @@ import (
 )
 
 type Claims struct {
-	UserID   int64  `json:"user_id"`
-	UserName string `json:"user_name"`
+	UserID       int64  `json:"user_id"`
+	UserName     string `json:"user_name"`
+	SessionToken string `json:"session_token"`
 	jwt.RegisteredClaims
 }
 
-func GenerateToken(userID int64, userName string) (string, error) {
+func GenerateSessionToken() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+func GenerateToken(userID int64, userName string, sessionToken string) (string, error) {
 	cfg := config.Global.JWT
 	claims := Claims{
-		UserID:   userID,
-		UserName: userName,
+		UserID:       userID,
+		UserName:     userName,
+		SessionToken: sessionToken,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Duration(cfg.ExpireHours) * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -61,6 +71,7 @@ func JWTAuth() gin.HandlerFunc {
 		}
 		c.Set("userID", claims.UserID)
 		c.Set("userName", claims.UserName)
+		c.Set("sessionToken", claims.SessionToken)
 		c.Next()
 	}
 }

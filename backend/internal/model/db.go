@@ -34,12 +34,15 @@ func InitDB() {
 	sqlDB.SetMaxIdleConns(cfg.MaxIdleConns)
 	sqlDB.SetMaxOpenConns(cfg.MaxOpenConns)
 
-	DB.Exec("SET GLOBAL sort_buffer_size = 8388608")
+	// Session-level tuning only; global server variables should be tuned via my.cnf,
+	// not by the application (which requires SUPER and silently fails otherwise).
+	DB.Exec("SET SESSION sort_buffer_size = 8388608")
 }
 
 func AutoMigrate() {
 	err := DB.AutoMigrate(
 		&User{},
+		&RegistrationRequest{},
 		&Role{},
 		&UserRole{},
 		&RolePermission{},

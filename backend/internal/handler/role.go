@@ -8,6 +8,7 @@ import (
 	"comic-admin/internal/pkg/response"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func ListRoles(c *gin.Context) {
@@ -30,19 +31,29 @@ type RoleReq struct {
 
 func CreateRole(c *gin.Context) {
 	var req RoleReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.FailBadRequest(c, "角色名称必填")
+	if !BindOrFail(c, &req) {
 		return
 	}
 
 	role := model.Role{Name: req.Name, Remark: req.Remark}
-	if err := model.DB.Create(&role).Error; err != nil {
-		response.FailServer(c, "创建角色失败，名称可能重复")
+	txErr := model.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&role).Error; err != nil {
+			return err
+		}
+		for _, key := range req.Permissions {
+			if err := tx.Create(&model.RolePermission{RoleID: role.ID, PermissionKey: key}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if txErr != nil {
+		if strings.Contains(txErr.Error(), "Duplicate") {
+			response.Fail(c, 400, "角色名称已存在")
+			return
+		}
+		response.FailServer(c, "创建角色失败")
 		return
-	}
-
-	for _, key := range req.Permissions {
-		model.DB.Create(&model.RolePermission{RoleID: role.ID, PermissionKey: key})
 	}
 
 	response.OK(c, role)
@@ -54,8 +65,7 @@ func UpdateRole(c *gin.Context) {
 		return
 	}
 	var req RoleReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.FailBadRequest(c, "参数错误")
+	if !BindOrFail(c, &req) {
 		return
 	}
 
@@ -65,18 +75,27 @@ func UpdateRole(c *gin.Context) {
 		return
 	}
 
-	if err := model.DB.Model(&role).Updates(map[string]any{"name": req.Name, "remark": req.Remark}).Error; err != nil {
-		if strings.Contains(err.Error(), "Duplicate") {
+	txErr := model.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&role).Updates(map[string]any{"name": req.Name, "remark": req.Remark}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("role_id = ?", id).Delete(&model.RolePermission{}).Error; err != nil {
+			return err
+		}
+		for _, key := range req.Permissions {
+			if err := tx.Create(&model.RolePermission{RoleID: id, PermissionKey: key}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if txErr != nil {
+		if strings.Contains(txErr.Error(), "Duplicate") {
 			response.Fail(c, 400, "角色名称已存在")
 		} else {
 			response.FailServer(c, "更新角色失败")
 		}
 		return
-	}
-
-	model.DB.Where("role_id = ?", id).Delete(&model.RolePermission{})
-	for _, key := range req.Permissions {
-		model.DB.Create(&model.RolePermission{RoleID: id, PermissionKey: key})
 	}
 
 	response.OKMsg(c, "更新成功")
@@ -121,9 +140,9 @@ func GetPermissionTree(c *gin.Context) {
 			{"key": "comicMake.my", "label": "我的任务", "children": []map[string]any{
 				{"key": "comicMake.my.list", "label": "列表数据"},
 				{"key": "comicMake.my.detail", "label": "任务详情"},
-				{"key": "comicMake.my.upload1", "label": "上传初版"},
-				{"key": "comicMake.my.upload2", "label": "上传终版"},
-				{"key": "comicMake.my.upload3", "label": "上传修改版"},
+				{"key": "comicMake.my.upload1", "label": "上传全集"},
+				{"key": "comicMake.my.upload2", "label": "上传分集"},
+				{"key": "comicMake.my.upload3", "label": "上传返修版"},
 				{"key": "comicMake.my.log", "label": "审核记录"},
 			}},
 		}},
@@ -155,6 +174,10 @@ func GetPermissionTree(c *gin.Context) {
 				{"key": "system.role.list", "label": "列表数据"},
 				{"key": "system.role.add", "label": "新增"},
 				{"key": "system.role.edit", "label": "编辑"},
+			}},
+			{"key": "system.registerReview", "label": "注册审核", "children": []map[string]any{
+				{"key": "system.registerReview.list", "label": "列表数据"},
+				{"key": "system.registerReview.review", "label": "审核"},
 			}},
 		}},
 	}

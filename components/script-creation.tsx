@@ -3,12 +3,21 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from "react"
 import { Search, RotateCcw, X } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { SelectFilter, ConfirmDialog } from "@/components/shared"
+import {
+  SelectFilter,
+  ConfirmDialog,
+  ScriptAuditTimeline,
+  mapScriptAuditLogsToNodes,
+  type ScriptAuditNode,
+  type ScriptAuditLogDTO,
+} from "@/components/shared"
 import { scriptDraftApi, bookApi } from "@/lib/api"
 import { toast } from "@/lib/toast"
 import { formatDateTime } from "@/lib/format"
-import { ListPagination, type PageSizeOption } from "@/components/list-pagination"
+import { ListPagination } from "@/components/list-pagination"
 import { usePerm } from "@/components/admin-layout"
+import { useFilters } from "@/hooks/use-filters"
+import { usePagination } from "@/hooks/use-pagination"
 import {
   sharedParagraphs,
   TRIAL_PARAGRAPH_INDEX,
@@ -20,16 +29,8 @@ import {
   type BookDetail,
 } from "@/lib/script-editor"
 import { ScriptEditorDrawer } from "@/components/script-editor"
-import { bookDetailMockMap } from "@/components/book-management"
 
 // ─── 类型定义 ─────────────────────────────────────────────────────────────────
-
-interface AuditRecord {
-  time: string
-  operator: string
-  action: string
-  remark: string
-}
 
 interface ScriptRow {
   id: string
@@ -42,7 +43,7 @@ interface ScriptRow {
   auditStatus: "待提审" | "待认领" | "审核中" | "审核通过" | "驳回修改" | "审核不通过"
   reviewer: string
   submitTime: string
-  auditRecords: AuditRecord[]
+  auditRecords: ScriptAuditNode[]
 }
 
 // ─── 列表项映射 ───────────────────────────────────────────────────────────────
@@ -78,8 +79,6 @@ function mapDraftToRow(d: {
     auditRecords: [],
   }
 }
-
-const draftMock: ScriptRow[] = []
 
 // ─── 默认筛选值 ───────────────────────────────────────────────────────────────
 
@@ -120,17 +119,7 @@ const auditStatusStyle: Record<string, { bg: string; text: string }> = {
 }
 
 
-// ─── 审核记录节点样式（与剧本审核保持一致）──────────────────────────────────────
-
-const auditActionStyle: Record<string, { dot: string; bg: string; text: string }> = {
-  "提交审核": { dot: "border-[#9ca3af] bg-white", bg: "bg-[#f9fafb]", text: "text-[#374151]" },
-  "领取任务": { dot: "border-[#f97316] bg-white", bg: "bg-[#fff7ed]", text: "text-[#ea580c]" },
-  "驳回修改": { dot: "border-[#d97706] bg-white", bg: "bg-[#fffbeb]", text: "text-[#d97706]" },
-  "审核通过": { dot: "border-[#059669] bg-[#059669]", bg: "bg-[#ecfdf5]", text: "text-[#059669]" },
-  "审核不通过": { dot: "border-[#dc2626] bg-[#dc2626]", bg: "bg-[#fef2f2]", text: "text-[#dc2626]" },
-}
-
-// ─── 审核记录抽屉 ─────────────────────────────────────────────────────────────
+// ─── 审核记录抽屉（壳层，内部时间线复用 ScriptAuditTimeline）─────────────────
 
 function AuditRecordDrawer({
   row,
@@ -139,7 +128,7 @@ function AuditRecordDrawer({
   onClose,
 }: {
   row: ScriptRow | null
-  records: AuditRecord[]
+  records: ScriptAuditNode[]
   loading: boolean
   onClose: () => void
 }) {
@@ -147,18 +136,10 @@ function AuditRecordDrawer({
 
   return (
     <>
-      {/* 遮罩 */}
-      <div
-        className="fixed inset-0 z-[40] bg-black/20"
-        onClick={onClose}
-      />
-      {/* 抽屉 */}
+      <div className="fixed inset-0 z-[40] bg-black/20" onClick={onClose} />
       <div className="fixed right-0 top-0 z-[50] flex h-full w-[420px] flex-col bg-white shadow-2xl">
-        {/* 头部 */}
         <div className="flex items-center justify-between border-b border-[#e5e7eb] px-5 py-4">
-          <div>
-            <p className="text-[14px] font-semibold text-[#111827]">审核记录</p>
-          </div>
+          <p className="text-[14px] font-semibold text-[#111827]">审核记录</p>
           <button
             onClick={onClose}
             className="flex h-7 w-7 items-center justify-center rounded-[6px] text-[#9ca3af] hover:bg-[#f3f4f6] hover:text-[#374151] transition-colors"
@@ -167,51 +148,10 @@ function AuditRecordDrawer({
           </button>
         </div>
 
-        {/* 记录列表 */}
         <div className="flex-1 overflow-y-auto px-5 py-4">
-          {loading ? (
-            <div className="py-12 text-center text-[13px] text-[#9ca3af]">加载中...</div>
-          ) : records.length === 0 ? (
-            <div className="py-12 text-center text-[13px] text-[#9ca3af]">暂无审核记录</div>
-          ) : (
-            <div className="relative pl-5">
-              {/* 时间轴竖线 */}
-              <div className="absolute left-[7px] top-2 bottom-2 w-px bg-[#e5e7eb]" />
-              <div className="flex flex-col gap-4">
-                {records.map((r, i) => {
-                  const style = auditActionStyle[r.action] ?? {
-                    dot: "border-[#9ca3af] bg-white",
-                    bg: "bg-[#f9fafb]",
-                    text: "text-[#374151]",
-                  }
-                  return (
-                    <div key={i} className="relative">
-                      {/* 圆点 */}
-                      <span
-                        className={cn(
-                          "absolute -left-[13px] top-[5px] h-2.5 w-2.5 rounded-full border-2",
-                          style.dot
-                        )}
-                      />
-                      <div className={cn("rounded-[6px] border border-[#f3f4f6] px-4 py-3", style.bg)}>
-                        <div className="flex items-center justify-between">
-                          <span className={cn("text-[12px] font-medium", style.text)}>{r.action}</span>
-                          <span className="text-[11px] text-[#9ca3af]">{r.operator}</span>
-                        </div>
-                        {r.remark && (
-                          <p className="mt-1 text-[12px] text-[#6b7280] whitespace-pre-wrap">{r.remark}</p>
-                        )}
-                        <p className="mt-1.5 text-[11px] text-[#9ca3af]">{r.time}</p>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          )}
+          <ScriptAuditTimeline records={records} loading={loading} />
         </div>
 
-        {/* 底部 */}
         <div className="border-t border-[#e5e7eb] px-5 py-3">
           <button
             onClick={onClose}
@@ -229,9 +169,6 @@ function AuditRecordDrawer({
 // ─── 进入工作台：构建 BookDetail ──────────────────────────────────────────────
 
 function buildScriptDetail(row: ScriptRow): BookDetail {
-  // 优先从 bookDetailMockMap 取已有 detail，否则构造一个
-  const existing = bookDetailMockMap[row.sourceBookId]
-  if (existing) return existing
   return {
     bookId: row.sourceBookId,
     bookName: row.scriptName,
@@ -241,8 +178,6 @@ function buildScriptDetail(row: ScriptRow): BookDetail {
     contentParagraphs: sharedParagraphs,
   }
 }
-
-// ─── 剧本详情 mock 数据映射 ───────────────────────────────────────────────────
 
 // 每条剧本对应一个详情，包含正文 + 分集线位置
 interface ScriptBreakpoint { afterParagraphIdx: number; label: string }
@@ -454,14 +389,18 @@ export default function ScriptCreation() {
   const [data, setData] = useState<ScriptRow[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
-  const [filters, setFilters] = useState({ ...defaultFilters })
-  const [applied, setApplied] = useState({ ...defaultFilters })
-  const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState<PageSizeOption>(10)
+  const {
+    draft: filters,
+    active: applied,
+    update: setField,
+    apply: applyFilters,
+    reset: resetFilters,
+  } = useFilters(defaultFilters)
+  const { page, pageSize, setPage, resetPage, paginationProps } = usePagination(10)
 
   // 弹层状态
   const [auditRow, setAuditRow] = useState<ScriptRow | null>(null)
-  const [auditLogs, setAuditLogs] = useState<AuditRecord[]>([])
+  const [auditLogs, setAuditLogs] = useState<ScriptAuditNode[]>([])
   const [auditLogsLoading, setAuditLogsLoading] = useState(false)
   const [deleteRow, setDeleteRow] = useState<ScriptRow | null>(null)
   const [workbenchRow, setWorkbenchRow] = useState<ScriptRow | null>(null)
@@ -511,15 +450,8 @@ export default function ScriptCreation() {
       .auditLogs(Number(auditRow.id))
       .then((logs) => {
         if (cancelled) return
-        const list = Array.isArray(logs) ? logs : []
-        setAuditLogs(
-          list.map((log: { createdAt?: string; operator?: { name?: string }; action: string; opinion?: string }) => ({
-            time: formatDateTime(log.createdAt),
-            operator: log.operator?.name ?? "",
-            action: log.action,
-            remark: log.opinion ?? "",
-          }))
-        )
+        const list = Array.isArray(logs) ? (logs as ScriptAuditLogDTO[]) : []
+        setAuditLogs(mapScriptAuditLogsToNodes(list))
       })
       .catch((e) => {
         if (!cancelled) {
@@ -535,11 +467,8 @@ export default function ScriptCreation() {
     }
   }, [auditRow])
 
-  function handleQuery() { setApplied({ ...filters }); setPage(1) }
-  function handleReset() { setFilters({ ...defaultFilters }); setApplied({ ...defaultFilters }); setPage(1) }
-  function setField(key: keyof typeof defaultFilters, val: string) {
-    setFilters((prev) => ({ ...prev, [key]: val }))
-  }
+  function handleQuery() { applyFilters(); resetPage() }
+  function handleReset() { resetFilters(); resetPage() }
 
   async function handleDelete() {
     if (!deleteRow) return
@@ -764,13 +693,7 @@ export default function ScriptCreation() {
 
       {/* 分页 */}
       <div className="shrink-0">
-        <ListPagination
-          total={total}
-          currentPage={page}
-          pageSize={pageSize}
-          onPageChange={(p) => setPage(p)}
-          onPageSizeChange={(s) => { setPageSize(s); setPage(1) }}
-        />
+        <ListPagination total={total} {...paginationProps} />
       </div>
 
       {/* 弹层 */}

@@ -66,8 +66,6 @@ const scriptTypeOptions = [
   { label: "多版本", value: "多版本" },
 ]
 
-const scriptMock: ScriptRow[] = []
-
 // ─── Defaults ─────────────────────────────────────────────────────────────────
 
 const defaultFilters: FilterForm = {
@@ -660,7 +658,6 @@ export default function ScriptManagement() {
         {/* Pagination */}
         <ListPagination
           total={total}
-          currentPage={currentPage}
           {...paginationProps}
         />
       </div>

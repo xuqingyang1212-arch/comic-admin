@@ -2,11 +2,22 @@
 
 import { useState, useRef, useEffect, useCallback } from "react"
 import { Search, RotateCcw, ChevronDown, X, ZoomIn } from "lucide-react"
-import { FilterInput, SelectFilter, DateRangePicker, ImageGalleryModal } from "@/components/shared"
+import {
+  FilterInput,
+  SelectFilter,
+  DateRangePicker,
+  ImageGalleryModal,
+  ConfirmDialog,
+  AuditRecordTimeline,
+  mapAuditLogsToRecords as sharedMapAuditLogsToRecords,
+  type AuditRecord,
+  type AuditOpinionRecord,
+  type AuditLogDTO,
+} from "@/components/shared"
 import { ART_STYLE_OPTIONS, VISUAL_EFFECT_OPTIONS, ASPECT_RATIO_OPTIONS, TASK_TYPE_OPTIONS, TASK_HALL_PROGRESS_BY_TYPE } from "@/lib/constants"
 import { formatDateTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
-import { productionTaskApi } from "@/lib/api"
+import { productionTaskApi, assetUrl } from "@/lib/api"
 import { toast } from "@/lib/toast"
 import { ListPagination } from "@/components/list-pagination"
 import { useFilters } from "@/hooks/use-filters"
@@ -38,21 +49,8 @@ const defaultFilters = {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type AuditStatus = "领取任务" | "提交审核" | "驳回修改" | "审核通过" | "发起成片修改" | "取消任务"
-type AuditStageType = "初版" | "终版" | "修改版"
-
-interface OpinionImage { id: string; dataUrl: string; name: string }
-interface OpinionRecord { id: string; text: string; images: OpinionImage[] }
-interface AuditRecord {
-  id: number
-  status: AuditStatus
-  time: string
-  operator: string
-  remark?: string
-  stageType: AuditStageType
-  round?: number
-  opinionRecords?: OpinionRecord[]
-}
+// 审核时间线的所有类型/映射/样式统一由 @/components/shared/audit-record-timeline 提供，
+// 与漫剧制作（my-task）和漫剧审核（draft-review）保持完全一致。
 
 interface TaskRow {
   id: number
@@ -77,55 +75,6 @@ interface TaskRow {
 
 // ─── API mappers ─────────────────────────────────────────────────────────────
 
-const formatPublishTime = formatDateTime
-
-function mapActionToAuditStatus(action: string): AuditStatus {
-  if (action === "已取消") return "取消任务"
-  const known: AuditStatus[] = ["领取任务", "提交审核", "驳回修改", "审核通过", "发起成片修改", "取消任务"]
-  if (known.includes(action as AuditStatus)) return action as AuditStatus
-  return "提交审核"
-}
-
-function parseStageType(s: string | undefined): AuditStageType {
-  if (s === "初版" || s === "终版" || s === "修改版") return s
-  return "初版"
-}
-
-function parseOpinionSnapshot(raw: string | undefined): OpinionRecord[] {
-  if (!raw) return []
-  try {
-    const arr = JSON.parse(raw) as { content?: string; images?: string[] }[]
-    if (!Array.isArray(arr)) return []
-    return arr.map((o, i) => ({
-      id: `snap-${i}`,
-      text: o.content ?? "",
-      images: (o.images ?? []).map((url, j) => ({
-        id: `img-${i}-${j}`,
-        dataUrl: url,
-        name: "",
-      })),
-    }))
-  } catch {
-    return []
-  }
-}
-
-function mapAuditLogsToRecords(logs: any[]): AuditRecord[] {
-  return logs.map((log) => {
-    const status = mapActionToAuditStatus(String(log.action ?? ""))
-    const opinionRecords = parseOpinionSnapshot(log.opinionSnapshot)
-    const rec: AuditRecord = {
-      id: Number(log.id),
-      status,
-      time: formatPublishTime(log.createdAt),
-      operator: log.operator?.name ?? "",
-      stageType: parseStageType(log.stageType),
-    }
-    if (opinionRecords.length > 0) rec.opinionRecords = opinionRecords
-    return rec
-  })
-}
-
 function mapApiTaskToRow(t: any): TaskRow {
   const taskType = t.taskType === "修改" ? "修改" : "制作"
   const producerName = t.producer?.name ?? ""
@@ -138,7 +87,7 @@ function mapApiTaskToRow(t: any): TaskRow {
     visualEffect: String(t.visualEffect ?? ""),
     aspectRatio: String(t.aspectRatio ?? ""),
     productionRemark: String(t.productionRemark ?? ""),
-    publishTime: formatPublishTime(t.publishTime),
+    publishTime: formatDateTime(t.publishTime),
     taskType,
     taskProgress: String(t.taskProgress ?? ""),
     owner: producerName,
@@ -158,49 +107,13 @@ function mapDetailToTaskRow(detail: any, auditRecords: AuditRecord[]): TaskRow {
   return base
 }
 
-// ─── Audit Record Styles ──────────────────────────────────────────────────────
-
-const auditStatusDotColor: Record<AuditStatus, string> = {
-  "领取任务": "bg-[#6366f1] border-[#c7d2fe]",
-  "提交审核": "bg-[#9ca3af] border-[#d1d5db]",
-  "驳回修改": "bg-[#f59e0b] border-[#fde68a]",
-  "审核通过": "bg-[#38c08f] border-[#bbf7d0]",
-  "发起成片修改": "bg-[#94a3b8] border-[#cbd5e1]",
-  "取消任务": "bg-[#f87171] border-[#fecaca]",
-}
-
-const auditStatusCardStyle: Record<AuditStatus, { bg: string; border: string; titleColor: string }> = {
-  "领取任务": { bg: "bg-[#eef2ff]", border: "border-[#c7d2fe]", titleColor: "text-[#4338ca]" },
-  "提交审核": { bg: "bg-white", border: "border-[#e5e7eb]", titleColor: "text-[#374151]" },
-  "驳回修改": { bg: "bg-[#fefce8]", border: "border-[#fef08a]", titleColor: "text-[#a16207]" },
-  "审核通过": { bg: "bg-[#f0fdf4]", border: "border-[#bbf7d0]", titleColor: "text-[#16a34a]" },
-  "发起成片修改": { bg: "bg-[#f8fafc]", border: "border-[#e2e8f0]", titleColor: "text-[#475569]" },
-  "取消任务": { bg: "bg-[#fff1f2]", border: "border-[#fecaca]", titleColor: "text-[#dc2626]" },
-}
-
-const stageTypeLabel: Record<AuditStageType, { text: string; color: string }> = {
-  "初版": { text: "初版", color: "text-[#2563eb] bg-[#eff6ff] border-[#bfdbfe]" },
-  "终版": { text: "终版", color: "text-[#16a34a] bg-[#f0fdf4] border-[#bbf7d0]" },
-  "修改版": { text: "修改版", color: "text-[#ea580c] bg-[#fff7ed] border-[#fed7aa]" },
-}
-
-// ─── TaskHallAuditRecordDrawer ────────────────────────────────────────────────
+// ─── TaskHallAuditRecordDrawer（壳层，内部时间线复用 AuditRecordTimeline）────
 
 function TaskHallAuditRecordDrawer({ row, onClose }: { row: TaskRow; onClose: () => void }) {
-  const [previewGallery, setPreviewGallery] = useState<{ images: string[]; index: number } | null>(null)
-
-  const records = row.auditRecords.filter((r) =>
-    row.taskType === "制作"
-      ? r.stageType === "初版" || r.stageType === "终版"
-      : r.stageType === "修改版"
-  )
-
   return (
     <>
       <div className="fixed inset-0 z-[90] bg-black/40" onClick={onClose} />
       <div className="fixed right-0 top-0 z-[100] flex h-full w-[420px] flex-col bg-white shadow-xl">
-
-        {/* 头部 */}
         <div className="flex shrink-0 items-center justify-between border-b border-[#e5e7eb] px-5 py-4">
           <span className="text-[15px] font-semibold text-[#111827]">审核记录</span>
           <button
@@ -212,91 +125,15 @@ function TaskHallAuditRecordDrawer({ row, onClose }: { row: TaskRow; onClose: ()
           </button>
         </div>
 
-        {/* 可滚动主体 */}
         <div className="flex-1 overflow-y-auto px-5 py-5">
-          {records.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#f3f4f6]">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-5 w-5 text-[#9ca3af]">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6M9 8h.01M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" />
-                </svg>
-              </div>
-              <p className="text-[13px] text-[#9ca3af]">暂无审核记录</p>
-            </div>
-          ) : (
-            <div className="relative pl-6">
-              <div className="absolute left-[7px] top-2 bottom-2 w-px bg-[#e5e7eb]" />
-              {records.map((rec, idx, arr) => {
-                const card = auditStatusCardStyle[rec.status] ?? auditStatusCardStyle["提交审核"]
-                const dot = auditStatusDotColor[rec.status] ?? "bg-[#9ca3af] border-[#d1d5db]"
-                const stage = stageTypeLabel[rec.stageType] ?? { text: rec.stageType, color: "text-[#6b7280] bg-[#f3f4f6] border-[#e5e7eb]" }
-                const isOpinionNode = rec.status === "驳回修改" || rec.status === "发起成片修改"
-                const hasOpinionRecords = isOpinionNode && rec.opinionRecords && rec.opinionRecords.length > 0
-                const isLast = idx === arr.length - 1
-
-                return (
-                  <div key={rec.id} className={cn("relative", isLast ? "mb-0" : "mb-4")}>
-                    <div className={cn("absolute -left-6 top-[11px] h-[13px] w-[13px] rounded-full border-2", dot)} />
-                    <div className={cn("rounded-[6px] border px-3.5 py-3", card.bg, card.border)}>
-                      <div className="flex items-center gap-2">
-                        <span className={cn("flex-1 text-[12.5px] font-semibold leading-none", card.titleColor)}>
-                          {rec.status}
-                        </span>
-                        {rec.status !== "领取任务" && (
-                          <span className={cn("inline-flex items-center rounded-[3px] border px-1.5 py-0.5 text-[10.5px] font-medium leading-none", stage.color)}>
-                            {stage.text}
-                          </span>
-                        )}
-                        <span className="text-[11.5px] text-[#6b7280]">{rec.operator}</span>
-                      </div>
-                      <div className="mt-1.5 text-[11.5px] text-[#9ca3af]">{rec.time}</div>
-                      {isOpinionNode && (
-                        <div className="mt-3 flex flex-col gap-2">
-                          {hasOpinionRecords ? (
-                            rec.opinionRecords!.map((op) => {
-                              const hasText = !!op.text.trim()
-                              const hasImages = op.images.length > 0
-                              if (!hasText && !hasImages) return null
-                              return (
-                                <div key={op.id} className="rounded-[5px] border border-[#fef08a] bg-[#fffbeb] px-3 py-2.5">
-                                  {hasText && (
-                                    <p className="text-[12px] leading-relaxed text-[#78350f] whitespace-pre-wrap">{op.text}</p>
-                                  )}
-                                  {hasImages && (
-                                    <div className={cn("flex flex-wrap gap-1.5", hasText ? "mt-2" : "")}>
-                                      {op.images.map((img, imgIdx) => (
-                                        <div
-                                          key={img.id}
-                                          className="group relative h-14 w-14 shrink-0 cursor-pointer overflow-hidden rounded-[4px] border border-[#fde68a] bg-white"
-                                          onClick={() => setPreviewGallery({ images: op.images.map((m) => m.dataUrl), index: imgIdx })}
-                                        >
-                                          <img src={img.dataUrl} alt={img.name} className="h-full w-full object-cover" />
-                                          <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <ZoomIn size={12} className="text-white" />
-                                          </div>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              )
-                            })
-                          ) : rec.remark ? (
-                            <div className="rounded-[4px] border border-[#fef08a] bg-[#fefce8] px-2.5 py-1.5 text-[12px] leading-relaxed text-[#78350f]">
-                              {rec.remark}
-                            </div>
-                          ) : null}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          )}
+          <AuditRecordTimeline
+            records={row.auditRecords}
+            taskType={row.taskType}
+            resolveImageSrc={assetUrl}
+            galleryZIndex={130}
+          />
         </div>
 
-        {/* 底部操作栏 */}
         <div className="shrink-0 border-t border-[#e5e7eb] px-5 py-3">
           <button
             onClick={onClose}
@@ -306,14 +143,9 @@ function TaskHallAuditRecordDrawer({ row, onClose }: { row: TaskRow; onClose: ()
           </button>
         </div>
       </div>
-
-      {previewGallery && <ImageGalleryModal images={previewGallery.images} initialIndex={previewGallery.index} onClose={() => setPreviewGallery(null)} zIndex={130} />}
     </>
   )
 }
-
-// ─── Script Detail Drawer ─────────────────────────────────────────────────────
-const scriptDetailMockMap: Record<number, string> = {}
 
 // ─── Script Detail Drawer ─────────────────────────────────────────────────────
 
@@ -426,7 +258,7 @@ function TaskScriptDetailDrawer({
   ]
 
   // 修改类型：从 auditRecords 中收集所有"发起成片修改/驳回修改"节点的 opinionRecords
-  const modifyOpinionRecords: (OpinionRecord & { recordId: string })[] = []
+  const modifyOpinionRecords: (AuditOpinionRecord & { recordId: string })[] = []
   if (row.taskType === "修改") {
     row.auditRecords.forEach((rec) => {
       if ((rec.status === "发起成片修改" || rec.status === "驳回修改") && rec.opinionRecords) {
@@ -436,7 +268,12 @@ function TaskScriptDetailDrawer({
           }
         })
       } else if ((rec.status === "发起成片修改" || rec.status === "驳回修改") && rec.remark) {
-        modifyOpinionRecords.push({ id: `r-${rec.id}`, text: rec.remark, images: [], recordId: `r-${rec.id}` } as any)
+        modifyOpinionRecords.push({
+          id: `r-${rec.id}`,
+          text: rec.remark,
+          images: [],
+          recordId: `r-${rec.id}`,
+        })
       }
     })
   }
@@ -525,7 +362,7 @@ function TaskScriptDetailDrawer({
                                 {op.images.map((img, imgIdx) => (
                                   <div key={img.id} className="group relative h-14 w-14 shrink-0 cursor-pointer overflow-hidden rounded-[4px] border border-[#fde68a] bg-white"
                                     onClick={() => setPreviewGallery({ images: op.images.map((m) => m.dataUrl), index: imgIdx })}>
-                                    <img src={img.dataUrl} alt={img.name} className="h-full w-full object-cover" />
+                                    <img src={assetUrl(img.dataUrl)} alt={img.name} className="h-full w-full object-cover" />
                                     <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity">
                                       <ZoomIn size={12} className="text-white" />
                                     </div>
@@ -554,7 +391,7 @@ function TaskScriptDetailDrawer({
           </div>
         </div>
       </div>
-      {previewGallery && <ImageGalleryModal images={previewGallery.images} initialIndex={previewGallery.index} onClose={() => setPreviewGallery(null)} zIndex={130} />}
+      {previewGallery && <ImageGalleryModal images={previewGallery.images} initialIndex={previewGallery.index} onClose={() => setPreviewGallery(null)} zIndex={130} resolveSrc={assetUrl} />}
     </>
   )
 }
@@ -577,12 +414,13 @@ function TaskTypeBadge({ type }: { type: string }) {
 function TaskProgressBadge({ progress }: { progress: string }) {
   const cfg: Record<string, { bg: string; text: string; border: string }> = {
     "待认领": { bg: "bg-[#eff6ff]", text: "text-[#2563eb]", border: "border-[#bfdbfe]" },
-    "初版制作中": { bg: "bg-[#fffbeb]", text: "text-[#d97706]", border: "border-[#fde68a]" },
-    "初版审核中": { bg: "bg-[#fdf4ff]", text: "text-[#9333ea]", border: "border-[#e9d5ff]" },
-    "终版制作中": { bg: "bg-[#fff7ed]", text: "text-[#c2410c]", border: "border-[#fed7aa]" },
-    "终版审核中": { bg: "bg-[#fdf2f8]", text: "text-[#be185d]", border: "border-[#fbcfe8]" },
-    "修改版制作中": { bg: "bg-[#fffbeb]", text: "text-[#d97706]", border: "border-[#fde68a]" },
-    "修改版审核中": { bg: "bg-[#fdf4ff]", text: "text-[#9333ea]", border: "border-[#e9d5ff]" },
+    "全集制作中": { bg: "bg-[#fffbeb]", text: "text-[#d97706]", border: "border-[#fde68a]" },
+    "全集审核中": { bg: "bg-[#fdf4ff]", text: "text-[#9333ea]", border: "border-[#e9d5ff]" },
+    "分集制作中": { bg: "bg-[#fff7ed]", text: "text-[#c2410c]", border: "border-[#fed7aa]" },
+    "分集审核中": { bg: "bg-[#fdf2f8]", text: "text-[#be185d]", border: "border-[#fbcfe8]" },
+    "二审审核中": { bg: "bg-[#fef3c7]", text: "text-[#d97706]", border: "border-[#fde68a]" },
+    "返修版制作中": { bg: "bg-[#fffbeb]", text: "text-[#d97706]", border: "border-[#fde68a]" },
+    "返修版审核中": { bg: "bg-[#fdf4ff]", text: "text-[#9333ea]", border: "border-[#e9d5ff]" },
     "已完成": { bg: "bg-[#ecfdf5]", text: "text-[#059669]", border: "border-[#a7f3d0]" },
     "已取消": { bg: "bg-[#f3f4f6]", text: "text-[#6b7280]", border: "border-[#e5e7eb]" },
   }
@@ -596,35 +434,6 @@ function TaskProgressBadge({ progress }: { progress: string }) {
 
 // ─── Confirm Dialog ───────────────────────────────────────────────────────────
 
-function ConfirmDialog({ message, onConfirm, onCancel }: { message: string; onConfirm: () => void; onCancel: () => void }) {
-  return (
-    <>
-      <div className="fixed inset-0 bg-black/30" style={{ zIndex: 200 }} onClick={onCancel} />
-      <div
-        className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[360px] rounded-[8px] bg-white p-6 shadow-xl"
-        style={{ zIndex: 201 }}
-      >
-        <p className="mb-5 text-[14px] text-[#374151]">{message}</p>
-        <div className="flex justify-end gap-2">
-          <button
-            onClick={onCancel}
-            className="rounded-[6px] border border-[#d1d5db] bg-white px-5 py-1.5 text-[13px] text-[#374151] hover:bg-[#f9fafb] transition-colors"
-          >
-            取消
-          </button>
-          <button
-            onClick={onConfirm}
-            className="rounded-[6px] bg-[#f04438] px-5 py-1.5 text-[13px] font-medium text-white hover:bg-[#d03025] transition-colors"
-          >
-            确认取消任务
-          </button>
-        </div>
-      </div>
-    </>
-  )
-}
-
-const taskHallMock: TaskRow[] = []
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
@@ -716,7 +525,7 @@ export default function TaskHall() {
         productionTaskApi.detail(id),
         productionTaskApi.auditLogs(id),
       ])
-      const auditRecords = mapAuditLogsToRecords(logs ?? [])
+      const auditRecords = sharedMapAuditLogsToRecords((logs ?? []) as AuditLogDTO[])
       setDetailRow(mapDetailToTaskRow(detail, auditRecords))
     } catch (e) {
       toast.errorFrom(e, "加载详情失败")
@@ -726,7 +535,7 @@ export default function TaskHall() {
   async function openAuditDrawer(row: TaskRow) {
     try {
       const logs = await productionTaskApi.auditLogs(row.id)
-      const auditRecords = mapAuditLogsToRecords(logs ?? [])
+      const auditRecords = sharedMapAuditLogsToRecords((logs ?? []) as AuditLogDTO[])
       setAuditDrawerRow({ ...row, auditRecords })
     } catch (e) {
       toast.errorFrom(e, "加载审核记录失败")
@@ -951,7 +760,11 @@ export default function TaskHall() {
       {/* Confirm Dialog */}
       {confirmId !== null && confirmRow && (
         <ConfirmDialog
+          title="取消任务"
           message={`确认取消任务「${confirmRow.scriptName}」？取消后状态将变为【已取消】且不可恢复。`}
+          confirmLabel="确认取消任务"
+          danger
+          zIndex={200}
           onConfirm={() => handleCancelConfirm(confirmId)}
           onCancel={() => setConfirmId(null)}
         />

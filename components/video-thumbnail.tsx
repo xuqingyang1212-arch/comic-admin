@@ -496,24 +496,44 @@ export function VideoThumbnail({
   const [thumb, setThumb] = useState<string | null>(null)
 
   useEffect(() => {
+    let cancelled = false
     const videoUrl = URL.createObjectURL(state.file)
     const video = document.createElement("video")
-    video.crossOrigin = "anonymous"
-    video.src = videoUrl
-    video.currentTime = 0.5
-    video.onloadeddata = () => {
-      const canvas = document.createElement("canvas")
-      canvas.width = 160
-      canvas.height = 90
-      const ctx = canvas.getContext("2d")
-      if (ctx) {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-        setThumb(canvas.toDataURL("image/jpeg", 0.8))
-      }
+    video.preload = "auto"
+    video.muted = true
+    video.playsInline = true
+    video.style.cssText = "position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none"
+
+    function cleanup() {
+      if (video.parentNode) video.parentNode.removeChild(video)
       URL.revokeObjectURL(videoUrl)
     }
-    video.onerror = () => URL.revokeObjectURL(videoUrl)
-    return () => URL.revokeObjectURL(videoUrl)
+
+    video.onloadedmetadata = () => {
+      if (cancelled) return
+      video.currentTime = Math.min(0.5, video.duration)
+    }
+    video.onseeked = () => {
+      if (cancelled) return
+      try {
+        const canvas = document.createElement("canvas")
+        canvas.width = 160
+        canvas.height = 90
+        const ctx = canvas.getContext("2d")
+        if (ctx) {
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+          setThumb(canvas.toDataURL("image/jpeg", 0.8))
+        }
+      } catch { /* ignore */ }
+      cleanup()
+    }
+    video.onerror = () => cleanup()
+
+    document.body.appendChild(video)
+    video.src = videoUrl
+    video.load()
+
+    return () => { cancelled = true; cleanup() }
   }, [state.file])
 
   const sizeMB = (state.file.size / 1024 / 1024).toFixed(1)
@@ -545,13 +565,28 @@ export function RemoteVideoThumbnail({
     if (!resolvedUrl) return
     let cancelled = false
 
+    let activeVideo: HTMLVideoElement | null = null
+
+    function removeActive() {
+      if (activeVideo?.parentNode) activeVideo.parentNode.removeChild(activeVideo)
+      activeVideo = null
+    }
+
     function tryCapture(crossOrigin: boolean) {
+      removeActive()
       const video = document.createElement("video")
+      activeVideo = video
       if (crossOrigin) video.crossOrigin = "anonymous"
-      video.preload = "metadata"
+      video.preload = "auto"
       video.muted = true
       video.playsInline = true
-      video.onloadeddata = () => {
+      video.style.cssText = "position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none"
+
+      video.onloadedmetadata = () => {
+        if (cancelled) return
+        video.currentTime = Math.min(0.5, video.duration)
+      }
+      video.onseeked = () => {
         if (cancelled) return
         try {
           const canvas = document.createElement("canvas")
@@ -563,18 +598,21 @@ export function RemoteVideoThumbnail({
             setThumb(canvas.toDataURL("image/jpeg", 0.8))
           }
         } catch {
-          if (crossOrigin && !cancelled) tryCapture(false)
+          if (crossOrigin && !cancelled) { tryCapture(false); return }
         }
+        removeActive()
       }
       video.onerror = () => {
         if (crossOrigin && !cancelled) tryCapture(false)
+        else removeActive()
       }
+      document.body.appendChild(video)
       video.src = resolvedUrl
-      video.currentTime = 0.5
+      video.load()
     }
 
     tryCapture(true)
-    return () => { cancelled = true }
+    return () => { cancelled = true; removeActive() }
   }, [resolvedUrl])
 
   const sizeMB = (state.fileSize / 1024 / 1024).toFixed(1)

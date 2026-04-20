@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect, useCallback } from "react"
+import { useState, useRef, useEffect, useLayoutEffect, useCallback } from "react"
 import { X, Plus, Bold, Underline, Strikethrough, ChevronDown } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { toast } from "@/lib/toast"
@@ -101,7 +101,7 @@ export function ParagraphEditor({
   const isComposing = useRef(false)
   const lastHtml = useRef(node.html)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (ref.current && ref.current.innerHTML !== node.html) {
       ref.current.innerHTML = node.html
     }

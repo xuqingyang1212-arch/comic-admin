@@ -63,6 +63,7 @@ export const menuData: MenuItem[] = [
     children: [
       { key: "userMgr", label: "用户管理", parentKey: "system", parentLabel: "系统设置" },
       { key: "roleMgr", label: "角色管理", parentKey: "system", parentLabel: "系统设置" },
+      { key: "registerReview", label: "注册审核", parentKey: "system", parentLabel: "系统设置" },
     ],
   },
 ]
@@ -86,25 +87,17 @@ export default function AdminLayout() {
     ]
 
     async function initAuth() {
-      let token = getToken()
+      const token = getToken()
       if (!token) {
-        try {
-          const loginRes = await authApi.login("admin@comic-admin.com", "超级管理员")
-          if (loginRes.token) {
-            setToken(loginRes.token)
-            token = loginRes.token
-          }
-        } catch {
-          setCurrentUser({ name: "管理员", permissions: ALL_PERMS })
-          setAuthReady(true)
-          return
-        }
+        window.location.href = "/login"
+        return
       }
       try {
         const data = await authApi.me()
         setCurrentUser({ name: data.user?.name || "", permissions: data.permissions || [] })
       } catch {
-        setCurrentUser({ name: "管理员", permissions: ALL_PERMS })
+        window.location.href = "/login"
+        return
       }
       setAuthReady(true)
     }
@@ -136,7 +129,20 @@ export default function AdminLayout() {
     "system",
     "scriptCreate",
   ])
-  const [selectedKey, setSelectedKey] = useState<string>("")
+  const [selectedKey, setSelectedKeyRaw] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      const hash = window.location.hash.replace(/^#/, "")
+      if (hash) return hash
+    }
+    return ""
+  })
+
+  function setSelectedKey(key: string) {
+    setSelectedKeyRaw(key)
+    if (typeof window !== "undefined") {
+      window.history.replaceState(null, "", `#${key}`)
+    }
+  }
 
   useEffect(() => {
     if (authReady && !selectedKey) {

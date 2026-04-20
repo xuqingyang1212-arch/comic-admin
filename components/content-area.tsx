@@ -25,6 +25,7 @@ const ComicManagement = dynamic(() => import("@/components/comic-management"), {
 const DownloadCenter = dynamic(() => import("@/components/download-center"), { ssr: false, loading: () => <PageSkeleton /> })
 const UserManagement = dynamic(() => import("@/components/user-management"), { ssr: false, loading: () => <PageSkeleton /> })
 const RoleManagement = dynamic(() => import("@/components/role-management"), { ssr: false, loading: () => <PageSkeleton /> })
+const RegisterReview = dynamic(() => import("@/components/register-review"), { ssr: false, loading: () => <PageSkeleton /> })
 
 interface ContentAreaProps {
   breadcrumb: { parent?: string; current: string }
@@ -72,6 +73,8 @@ export default function ContentArea({ breadcrumb, selectedKey }: ContentAreaProp
           <UserManagement />
         ) : selectedKey === "roleMgr" ? (
           <RoleManagement />
+        ) : selectedKey === "registerReview" ? (
+          <RegisterReview />
         ) : (
       <div className="flex flex-col gap-3 rounded-lg bg-white border border-[#e5e7eb]">
         {/* Filter bar */}

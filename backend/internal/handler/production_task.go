@@ -12,6 +12,7 @@ import (
 	"comic-admin/internal/pkg/response"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func ListProductionTaskHall(c *gin.Context) {
@@ -58,9 +59,7 @@ func ListProductionTaskMine(c *gin.Context) {
 	total, _ := pagination.CountAndFind(db, p, "publish_time DESC", &tasks, "Reviewer")
 
 	attachScriptsToTasks(tasks)
-	for i := range tasks {
-		attachReviewEpisodeName(&tasks[i])
-	}
+	attachReviewEpisodeNameBatch(tasks)
 	response.OKPage(c, total, tasks)
 }
 
@@ -115,6 +114,36 @@ func attachReviewEpisodeName(task *model.ProductionTask) {
 	}
 }
 
+// attachReviewEpisodeNameBatch batch-loads the latest rejected ReviewTask.EpisodeName
+// for each production task (N+1 → 1 query).
+func attachReviewEpisodeNameBatch(tasks []model.ProductionTask) {
+	if len(tasks) == 0 {
+		return
+	}
+	ids := make([]int64, 0, len(tasks))
+	for i := range tasks {
+		ids = append(ids, tasks[i].ID)
+	}
+	var rows []model.ReviewTask
+	// Select only the fields we need; grab the most recent rejected record per production task
+	subQ := model.DB.Model(&model.ReviewTask{}).
+		Select("MAX(id) AS id").
+		Where("production_task_id IN ? AND review_status = ? AND episode_name <> ''", ids, consts.ReviewStatusRejected).
+		Group("production_task_id")
+	model.DB.Select("id, production_task_id, episode_name").
+		Where("id IN (?)", subQ).
+		Find(&rows)
+	m := make(map[int64]string, len(rows))
+	for _, r := range rows {
+		m[r.ProductionTaskID] = r.EpisodeName
+	}
+	for i := range tasks {
+		if name, ok := m[tasks[i].ID]; ok {
+			tasks[i].ReviewEpisodeName = name
+		}
+	}
+}
+
 func ClaimProductionTask(c *gin.Context) {
 	id, ok := ParseID(c, "id")
 	if !ok {
@@ -132,22 +161,36 @@ func ClaimProductionTask(c *gin.Context) {
 	}
 
 	userID := middleware.GetUserID(c)
-	res := model.DB.Model(&task).Where("task_progress = ?", consts.TaskProgressPending).Updates(map[string]any{
-		"task_progress": consts.TaskProgressFirstDraft,
-		"producer_id":   userID,
+
+	txErr := model.DB.Transaction(func(tx *gorm.DB) error {
+		res := tx.Model(&task).Where("task_progress = ?", consts.TaskProgressPending).Updates(map[string]any{
+			"task_progress": consts.TaskProgressFirstDraft,
+			"producer_id":   userID,
+		})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return errConflict
+		}
+		// 领取任务 is a cross-stage event (occurs before 全集/分集 splits),
+		// record with empty StageType so the timeline shows it as a neutral node.
+		return tx.Create(&model.ReviewAuditLog{
+			ProductionTaskID: id,
+			Action:           consts.ActionClaimTask,
+			StageType:        "",
+			OperatorID:       userID,
+			CreatedAt:        time.Now(),
+		}).Error
 	})
-	if res.RowsAffected == 0 {
-		response.Fail(c, 400, "该任务已被领取")
+	if txErr != nil {
+		if txErr == errConflict {
+			response.Fail(c, 400, "该任务已被领取")
+			return
+		}
+		response.Fail(c, 500, "领取失败，请重试")
 		return
 	}
-
-	model.DB.Create(&model.ReviewAuditLog{
-		ProductionTaskID: id,
-		Action:           consts.ActionClaimTask,
-		StageType:        consts.StageFirst,
-		OperatorID:       userID,
-		CreatedAt:        time.Now(),
-	})
 
 	response.OKMsg(c, "领取成功")
 }
@@ -169,44 +212,70 @@ func CancelProductionTask(c *gin.Context) {
 	}
 
 	oldProgress := task.TaskProgress
-	res := model.DB.Model(&task).Where("task_progress NOT IN ?", []string{consts.TaskProgressCompleted, consts.TaskProgressCancelled}).Update("task_progress", consts.TaskProgressCancelled)
-	if res.RowsAffected == 0 {
-		response.Fail(c, 400, "该任务已被处理，请勿重复操作")
-		return
-	}
-
-	// Cancel related review tasks
-	model.DB.Model(&model.ReviewTask{}).Where("production_task_id = ? AND review_status = ?", id, consts.ReviewStatusAuditing).
-		Update("review_status", consts.TaskProgressCancelled)
-
 	userID := middleware.GetUserID(c)
 	now := time.Now()
 
-	// Write a cancellation log for every stage that has existing audit records,
-	// so the cancel node appears in all relevant audit-record views.
-	var existingStages []string
-	model.DB.Model(&model.ReviewAuditLog{}).Where("production_task_id = ?", id).
-		Distinct("stage_type").Pluck("stage_type", &existingStages)
-
-	if len(existingStages) == 0 {
-		// Fallback: determine from task progress
-		st := consts.StageFirst
-		if strings.Contains(oldProgress, consts.StageFinal) {
-			st = consts.StageFinal
-		} else if strings.Contains(oldProgress, consts.StageRevision) {
-			st = consts.StageRevision
+	txErr := model.DB.Transaction(func(tx *gorm.DB) error {
+		res := tx.Model(&task).Where("task_progress NOT IN ?", []string{consts.TaskProgressCompleted, consts.TaskProgressCancelled}).Update("task_progress", consts.TaskProgressCancelled)
+		if res.Error != nil {
+			return res.Error
 		}
-		existingStages = []string{st}
-	}
+		if res.RowsAffected == 0 {
+			return errConflict
+		}
 
-	for _, st := range existingStages {
-		model.DB.Create(&model.ReviewAuditLog{
-			ProductionTaskID: id,
-			Action:           consts.ActionCancelTask,
-			StageType:        st,
-			OperatorID:       userID,
-			CreatedAt:        now,
-		})
+		if err := tx.Model(&model.ReviewTask{}).Where("production_task_id = ? AND review_status = ?", id, consts.ReviewStatusAuditing).
+			Update("review_status", consts.ReviewStatusCancelled).Error; err != nil {
+			return err
+		}
+
+		// Write a cancellation log for every stage that has existing audit records,
+		// so the cancel node appears in all relevant audit-record views.
+		// Ignore cross-stage actions (发布任务 / 领取任务) which have StageType == "".
+		var rawStages []string
+		if err := tx.Model(&model.ReviewAuditLog{}).Where("production_task_id = ?", id).
+			Distinct("stage_type").Pluck("stage_type", &rawStages).Error; err != nil {
+			return err
+		}
+		existingStages := make([]string, 0, len(rawStages))
+		for _, s := range rawStages {
+			if s != "" {
+				existingStages = append(existingStages, s)
+			}
+		}
+
+		if len(existingStages) == 0 {
+			// Fallback: determine from task progress (task cancelled before any
+			// stage-specific log was written, e.g. cancelled right after 领取任务).
+			st := consts.StageFirst
+			if strings.Contains(oldProgress, consts.StageFinal) {
+				st = consts.StageFinal
+			} else if strings.Contains(oldProgress, consts.StageRevision) {
+				st = consts.StageRevision
+			}
+			existingStages = []string{st}
+		}
+
+		for _, st := range existingStages {
+			if err := tx.Create(&model.ReviewAuditLog{
+				ProductionTaskID: id,
+				Action:           consts.ActionCancelTask,
+				StageType:        st,
+				OperatorID:       userID,
+				CreatedAt:        now,
+			}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if txErr != nil {
+		if txErr == errConflict {
+			response.Fail(c, 400, "该任务已被处理，请勿重复操作")
+			return
+		}
+		response.Fail(c, 500, "取消失败，请重试")
+		return
 	}
 
 	response.OKMsg(c, "取消成功")
@@ -220,13 +289,15 @@ func ListProductionAuditLogs(c *gin.Context) {
 	var logs []model.ReviewAuditLog
 	model.DB.Where("production_task_id = ?", id).Order("created_at ASC").Find(&logs)
 
-	for i := range logs {
-		if logs[i].OperatorID != 0 {
-			var op model.User
-			if model.DB.First(&op, logs[i].OperatorID).Error == nil {
-				logs[i].Operator = &op
-			}
+	opIDs := make([]int64, 0, len(logs))
+	for _, l := range logs {
+		if l.OperatorID != 0 {
+			opIDs = append(opIDs, l.OperatorID)
 		}
+	}
+	opMap := BatchLoadUsers(opIDs)
+	for i := range logs {
+		logs[i].Operator = opMap[logs[i].OperatorID]
 	}
 
 	response.OK(c, logs)
@@ -266,100 +337,118 @@ func SubmitDelivery(c *gin.Context) {
 		CoverURL     string                   `json:"coverUrl"`
 		Files        []TaskDeliveryFileReq    `json:"files"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.FailBadRequest(c, "参数错误")
+	if !BindOrFail(c, &req) {
 		return
 	}
-
-	upsertDelivery(id, req.DeliveryType, req.EpisodeName, req.CoverURL, req.Files)
 
 	// Update task progress and create review task
 	var newProgress, expectedProgress, reviewType, stageType string
 	switch req.DeliveryType {
 	case consts.StageFirst:
-		newProgress = "初版审核中"
+		newProgress = consts.TaskProgressFirstReviewing
 		expectedProgress = consts.TaskProgressFirstDraft
-		reviewType = "初版审核"
+		reviewType = consts.ReviewTypeFirst
 		stageType = consts.StageFirst
 	case consts.StageFinal:
-		newProgress = "终版审核中"
+		newProgress = consts.TaskProgressFinalReviewing
 		expectedProgress = consts.TaskProgressFinalDraft
-		reviewType = "终版审核"
+		reviewType = consts.ReviewTypeFinal
 		stageType = consts.StageFinal
 	case consts.StageRevision:
-		newProgress = "修改版审核中"
+		newProgress = consts.TaskProgressRevisionReviewing
 		expectedProgress = consts.TaskProgressRevision
-		reviewType = "修改版审核"
+		reviewType = consts.ReviewTypeRevision
 		stageType = consts.StageRevision
 	}
 
-	upRes := model.DB.Model(&task).Where("task_progress = ?", expectedProgress).Update("task_progress", newProgress)
-	if upRes.RowsAffected == 0 {
-		response.Fail(c, 400, "当前任务状态不允许提交，请勿重复操作")
-		return
-	}
+	userID := middleware.GetUserID(c)
 
-	// Reuse existing rejected review task of the same type, or create a new one
-	var reviewTask model.ReviewTask
-	existingFound := model.DB.Where("production_task_id = ? AND task_type = ? AND review_status = ?",
-		id, reviewType, consts.ReviewStatusRejected).Order("created_at DESC").First(&reviewTask).Error == nil
-
-	epName := req.EpisodeName
-	if epName == "" && existingFound && reviewTask.EpisodeName != "" {
-		epName = reviewTask.EpisodeName
-	}
-
-	if existingFound {
-		// Reuse: update status back to 审核中, keep existing opinions
-		updates := map[string]any{"review_status": consts.ReviewStatusAuditing}
-		if epName != "" {
-			updates["episode_name"] = epName
+	txErr := model.DB.Transaction(func(tx *gorm.DB) error {
+		if _, err := upsertDeliveryTx(tx, id, req.DeliveryType, req.EpisodeName, req.CoverURL, req.Files); err != nil {
+			return err
 		}
-		model.DB.Model(&reviewTask).Updates(updates)
-	} else {
-		// First submission: create new review task
-		reviewTask = model.ReviewTask{
-			ProductionTaskID: id,
-			TaskType:         reviewType,
-			ReviewStatus:     consts.ReviewStatusAuditing,
-			ReviewerID:       task.ReviewerID,
-			EpisodeName:      epName,
-		}
-		model.DB.Create(&reviewTask)
 
-		// For 修改版 first submission: seed opinions from "发起成片修改" audit log
-		if stageType == consts.StageRevision {
-			var initLog model.ReviewAuditLog
-			if model.DB.Where("production_task_id = ? AND action = ?", id, consts.ActionStartRevision).
-				First(&initLog).Error == nil && initLog.OpinionSnapshot != nil {
-				var snapOps []struct {
-					Content string   `json:"content"`
-					Images  []string `json:"images"`
-				}
-				if json.Unmarshal([]byte(*initLog.OpinionSnapshot), &snapOps) == nil {
-					for i, op := range snapOps {
-						if strings.TrimSpace(op.Content) == "" && len(op.Images) == 0 {
-							continue
+		upRes := tx.Model(&task).Where("task_progress = ?", expectedProgress).Update("task_progress", newProgress)
+		if upRes.Error != nil {
+			return upRes.Error
+		}
+		if upRes.RowsAffected == 0 {
+			return errConflict
+		}
+
+		// 1:1 upsert: find existing ReviewTask for this ProductionTask, or create one
+		var reviewTask model.ReviewTask
+		epName := req.EpisodeName
+		existingFound := tx.Where("production_task_id = ?", id).First(&reviewTask).Error == nil
+
+		if existingFound {
+			if epName == "" && reviewTask.EpisodeName != "" {
+				epName = reviewTask.EpisodeName
+			}
+			if err := tx.Model(&reviewTask).Updates(map[string]any{
+				"task_type":     reviewType,
+				"review_status": consts.ReviewStatusAuditing,
+				"reviewer_id":   task.ReviewerID,
+				"episode_name":  epName,
+			}).Error; err != nil {
+				return err
+			}
+		} else {
+			reviewTask = model.ReviewTask{
+				ProductionTaskID: id,
+				TaskType:         reviewType,
+				ReviewStatus:     consts.ReviewStatusAuditing,
+				ReviewerID:       task.ReviewerID,
+				EpisodeName:      epName,
+			}
+			if err := tx.Create(&reviewTask).Error; err != nil {
+				return err
+			}
+
+			if stageType == consts.StageRevision {
+				var initLog model.ReviewAuditLog
+				if tx.Where("production_task_id = ? AND action = ?", id, consts.ActionStartRevision).
+					First(&initLog).Error == nil && initLog.OpinionSnapshot != nil {
+					var snapOps []struct {
+						Content string   `json:"content"`
+						Images  []string `json:"images"`
+					}
+					if json.Unmarshal([]byte(*initLog.OpinionSnapshot), &snapOps) == nil {
+						for i, op := range snapOps {
+							if strings.TrimSpace(op.Content) == "" && len(op.Images) == 0 {
+								continue
+							}
+							if err := tx.Create(&model.ReviewOpinion{
+								ReviewTaskID: reviewTask.ID,
+								Content:      op.Content,
+								Images:       op.Images,
+								SortOrder:    i,
+							}).Error; err != nil {
+								return err
+							}
 						}
-						model.DB.Create(&model.ReviewOpinion{
-							ReviewTaskID: reviewTask.ID,
-							Content:      op.Content,
-							Images:       op.Images,
-							SortOrder:    i,
-						})
 					}
 				}
 			}
 		}
-	}
 
-	model.DB.Create(&model.ReviewAuditLog{
-		ProductionTaskID: id,
-		Action:           "提交审核",
-		StageType:        stageType,
-		OperatorID:       middleware.GetUserID(c),
-		CreatedAt:        time.Now(),
+		return tx.Create(&model.ReviewAuditLog{
+			ProductionTaskID: id,
+			Action:           consts.ActionSubmitReview,
+			StageType:        stageType,
+			OperatorID:       userID,
+			CreatedAt:        time.Now(),
+		}).Error
 	})
+
+	if txErr != nil {
+		if txErr == errConflict {
+			response.Fail(c, 400, "当前任务状态不允许提交，请勿重复操作")
+			return
+		}
+		response.Fail(c, 500, "提交失败，请重试")
+		return
+	}
 
 	response.OKMsg(c, "提交成功")
 }
@@ -372,13 +461,20 @@ type TaskDeliveryFileReq struct {
 	FileSize   int64  `json:"fileSize"`
 }
 
-// upsertDelivery replaces any existing delivery of the same type and creates a new one with files.
-func upsertDelivery(taskID int64, deliveryType, episodeName, coverURL string, files []TaskDeliveryFileReq) *model.TaskDelivery {
+// upsertDeliveryTx replaces any existing delivery of the same type and creates a new one with files.
+// Must run inside a transaction (pass tx). Returns the newly created delivery.
+func upsertDeliveryTx(tx *gorm.DB, taskID int64, deliveryType, episodeName, coverURL string, files []TaskDeliveryFileReq) (*model.TaskDelivery, error) {
 	var oldIDs []int64
-	model.DB.Model(&model.TaskDelivery{}).Where("task_id = ? AND delivery_type = ?", taskID, deliveryType).Pluck("id", &oldIDs)
+	if err := tx.Model(&model.TaskDelivery{}).Where("task_id = ? AND delivery_type = ?", taskID, deliveryType).Pluck("id", &oldIDs).Error; err != nil {
+		return nil, err
+	}
 	if len(oldIDs) > 0 {
-		model.DB.Where("delivery_id IN ?", oldIDs).Delete(&model.TaskDeliveryFile{})
-		model.DB.Where("id IN ?", oldIDs).Delete(&model.TaskDelivery{})
+		if err := tx.Where("delivery_id IN ?", oldIDs).Delete(&model.TaskDeliveryFile{}).Error; err != nil {
+			return nil, err
+		}
+		if err := tx.Where("id IN ?", oldIDs).Delete(&model.TaskDelivery{}).Error; err != nil {
+			return nil, err
+		}
 	}
 
 	delivery := model.TaskDelivery{
@@ -387,19 +483,23 @@ func upsertDelivery(taskID int64, deliveryType, episodeName, coverURL string, fi
 		EpisodeName:  episodeName,
 		CoverURL:     coverURL,
 	}
-	model.DB.Create(&delivery)
+	if err := tx.Create(&delivery).Error; err != nil {
+		return nil, err
+	}
 
 	for _, f := range files {
-		model.DB.Create(&model.TaskDeliveryFile{
+		if err := tx.Create(&model.TaskDeliveryFile{
 			DeliveryID: delivery.ID,
 			FileType:   f.FileType,
 			EpisodeNum: f.EpisodeNum,
 			FileURL:    f.FileURL,
 			FileName:   f.FileName,
 			FileSize:   f.FileSize,
-		})
+		}).Error; err != nil {
+			return nil, err
+		}
 	}
-	return &delivery
+	return &delivery, nil
 }
 
 func SaveDeliveryDraft(c *gin.Context) {
@@ -414,11 +514,17 @@ func SaveDeliveryDraft(c *gin.Context) {
 		CoverURL     string                `json:"coverUrl"`
 		Files        []TaskDeliveryFileReq `json:"files"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.FailBadRequest(c, "参数错误")
+	if !BindOrFail(c, &req) {
 		return
 	}
 
-	upsertDelivery(id, req.DeliveryType, req.EpisodeName, req.CoverURL, req.Files)
+	txErr := model.DB.Transaction(func(tx *gorm.DB) error {
+		_, err := upsertDeliveryTx(tx, id, req.DeliveryType, req.EpisodeName, req.CoverURL, req.Files)
+		return err
+	})
+	if txErr != nil {
+		response.Fail(c, 500, "保存失败，请重试")
+		return
+	}
 	response.OKMsg(c, "保存成功")
 }

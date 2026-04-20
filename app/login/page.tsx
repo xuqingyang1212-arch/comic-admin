@@ -1,33 +1,36 @@
 "use client"
 
 import { useState } from "react"
+import { useRouter } from "next/navigation"
+import { Eye, EyeOff } from "lucide-react"
 import { authApi, setToken } from "@/lib/api"
 
 export default function LoginPage() {
+  const router = useRouter()
   const [email, setEmail] = useState("")
-  const [name, setName] = useState("")
+  const [password, setPassword] = useState("")
+  const [showPwd, setShowPwd] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
     const trimmedEmail = email.trim()
-    if (!trimmedEmail) {
-      setError("请输入邮箱")
-      return
-    }
+    if (!trimmedEmail) { setError("请输入邮箱"); return }
+    if (!password) { setError("请输入密码"); return }
     setLoading(true)
     setError("")
     try {
-      const data = await authApi.login(trimmedEmail, name.trim() || undefined)
+      const data = await authApi.login(trimmedEmail, password)
       setToken(data.token)
       window.location.replace("/")
     } catch (err) {
-      console.error("Login failed:", err)
       setError(err instanceof Error ? err.message : "登录失败")
       setLoading(false)
     }
   }
+
+  const inputCls = "h-[38px] w-full rounded-[6px] border border-[#d1d5db] bg-white px-3 text-[13px] text-[#374151] placeholder-[#9ca3af] outline-none focus:border-[#38c08f] transition-colors"
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-[#f6f7f9]">
@@ -45,20 +48,37 @@ export default function LoginPage() {
               placeholder="请输入邮箱地址"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="h-[38px] w-full rounded-[6px] border border-[#d1d5db] bg-white px-3 text-[13px] text-[#374151] placeholder-[#9ca3af] outline-none focus:border-[#38c08f] transition-colors"
+              className={inputCls}
             />
           </div>
           <div>
-            <label className="mb-1.5 block text-[13px] font-medium text-[#374151]">
-              姓名 <span className="font-normal text-[#9ca3af]">(首次登录自动注册)</span>
-            </label>
-            <input
-              type="text"
-              placeholder="请输入姓名"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="h-[38px] w-full rounded-[6px] border border-[#d1d5db] bg-white px-3 text-[13px] text-[#374151] placeholder-[#9ca3af] outline-none focus:border-[#38c08f] transition-colors"
-            />
+            <label className="mb-1.5 block text-[13px] font-medium text-[#374151]">密码</label>
+            <div className="relative">
+              <input
+                type={showPwd ? "text" : "password"}
+                placeholder="请输入密码"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className={`${inputCls} pr-9`}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPwd((v) => !v)}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#9ca3af] hover:text-[#6b7280] transition-colors"
+              >
+                {showPwd ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex justify-end -mt-1">
+            <button
+              type="button"
+              onClick={() => router.push("/forgot-password")}
+              className="text-[12.5px] text-[#6b7280] hover:text-[#38c08f] transition-colors"
+            >
+              忘记密码？
+            </button>
           </div>
 
           {error && (
@@ -74,8 +94,15 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <p className="mt-5 text-center text-[12px] text-[#9ca3af]">
-          管理员账号: admin@comic-admin.com
+        <p className="mt-5 text-center text-[13px] text-[#6b7280]">
+          还没有账号？
+          <button
+            type="button"
+            onClick={() => router.push("/register")}
+            className="ml-1 font-medium text-[#38c08f] hover:text-[#2da87a] transition-colors"
+          >
+            立即注册
+          </button>
         </p>
       </div>
     </div>

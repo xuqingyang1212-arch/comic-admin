@@ -1,5 +1,6 @@
 "use client"
 
+import type { KeyboardEvent } from "react"
 import { cn } from "@/lib/utils"
 
 export interface FilterInputProps {
@@ -7,6 +8,7 @@ export interface FilterInputProps {
   placeholder: string
   value: string
   onChange: (v: string) => void
+  onKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void
   width?: string
 }
 
@@ -15,6 +17,7 @@ export function FilterInput({
   placeholder,
   value,
   onChange,
+  onKeyDown,
   width = "w-[148px]",
 }: FilterInputProps) {
   return (
@@ -25,6 +28,7 @@ export function FilterInput({
         placeholder={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onKeyDown={onKeyDown}
         className={cn(
           "h-[30px] rounded-[6px] border border-[#d1d5db] bg-white px-3 text-[13px] text-[#374151] placeholder-[#9ca3af] outline-none transition-colors focus:border-[#38c08f]",
           width

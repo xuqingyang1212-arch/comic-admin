@@ -10,6 +10,7 @@ import (
 	"comic-admin/internal/pkg/response"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func ListScripts(c *gin.Context) {
@@ -122,8 +123,7 @@ func PublishProductionTask(c *gin.Context) {
 	}
 
 	var req PublishTaskReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.FailBadRequest(c, "画风/视觉效果/画面比例必填")
+	if !BindOrFail(c, &req) {
 		return
 	}
 
@@ -143,7 +143,22 @@ func PublishProductionTask(c *gin.Context) {
 		PublishTime:      time.Now(),
 	}
 
-	if err := model.DB.Create(&task).Error; err != nil {
+	txErr := model.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&task).Error; err != nil {
+			return err
+		}
+		// Record a "发布任务" audit log so the publish node shows up
+		// in both 制作 and 审核 timelines. StageType is left empty because
+		// this action is cross-stage (it exists before 全集/分集 splits).
+		return tx.Create(&model.ReviewAuditLog{
+			ProductionTaskID: task.ID,
+			Action:           consts.ActionPublishTask,
+			StageType:        "",
+			OperatorID:       userID,
+			CreatedAt:        time.Now(),
+		}).Error
+	})
+	if txErr != nil {
 		response.FailServer(c, "发布失败")
 		return
 	}
@@ -166,8 +181,7 @@ func CreateScriptRemake(c *gin.Context) {
 		ScriptName string `json:"scriptName" binding:"required"`
 		Content    string `json:"content"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.FailBadRequest(c, "剧本名称必填")
+	if !BindOrFail(c, &req) {
 		return
 	}
 

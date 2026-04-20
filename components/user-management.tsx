@@ -20,6 +20,8 @@ interface User {
   email: string
   roles: string[]
   status: UserStatus
+  reviewerId: number
+  reviewerName: string
   createdAt: string
 }
 
@@ -35,6 +37,7 @@ interface UserForm {
   email: string
   roles: string[]
   status: string
+  reviewerId: number
 }
 
 interface UserFormErrors {
@@ -44,11 +47,8 @@ interface UserFormErrors {
   status?: string
 }
 
-// ─────────────── Mock Data ───────────────
-const initialUsers: User[] = []
-
 const defaultFilters: FilterForm = { name: "", email: "", role: "", status: "" }
-const defaultUserForm: UserForm = { name: "", email: "", roles: [], status: "" }
+const defaultUserForm: UserForm = { name: "", email: "", roles: [], status: "", reviewerId: 0 }
 
 const roleOptionsFallback: { label: string; value: string }[] = []
 
@@ -68,12 +68,15 @@ function mapApiUser(u: Record<string, unknown>): User {
     : []
   const createdAt = formatDateTime(u.createdAt as string | undefined)
   const st = u.status === "禁用" ? "禁用" : "启用"
+  const reviewer = u.reviewer as { id?: number; name?: string } | null | undefined
   return {
     id: String(u.id ?? ""),
     name: String(u.name ?? ""),
     email: String(u.email ?? ""),
     roles: roles.filter(Boolean),
     status: st as UserStatus,
+    reviewerId: Number(u.reviewerId ?? 0),
+    reviewerName: reviewer?.name ?? "",
     createdAt,
   }
 }
@@ -174,10 +177,10 @@ function MultiRoleSelect({
 
 // ─────────────── FormSelectSingle ───────────────
 function FormSelectSingle({
-  label, value, onChange, options, placeholder, error, required,
+  label, value, onChange, options, placeholder, error, required, clearable,
 }: {
   label: string; value: string; onChange: (v: string) => void
-  options: { label: string; value: string }[]; placeholder: string; error?: string; required?: boolean
+  options: { label: string; value: string }[]; placeholder: string; error?: string; required?: boolean; clearable?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -199,10 +202,15 @@ function FormSelectSingle({
             error ? "!border-[#f04438]" : "",
             selected ? "text-[#374151]" : "text-[#9ca3af]")}>
           <span className="flex-1 truncate text-left">{selected ? selected.label : placeholder}</span>
-          <ChevronDown size={13} className="shrink-0 text-[#9ca3af]" />
+          {clearable && selected ? (
+            <X size={13} className="shrink-0 text-[#9ca3af] hover:text-[#374151]"
+              onClick={(e) => { e.stopPropagation(); onChange(""); setOpen(false) }} />
+          ) : (
+            <ChevronDown size={13} className="shrink-0 text-[#9ca3af]" />
+          )}
         </button>
         {open && (
-          <div className="absolute left-0 top-[calc(100%+4px)] z-50 w-full rounded-[6px] border border-[#e5e7eb] bg-white py-1 shadow-lg">
+          <div className="absolute left-0 top-[calc(100%+4px)] z-50 max-h-[240px] w-full overflow-y-auto rounded-[6px] border border-[#e5e7eb] bg-white py-1 shadow-lg">
             {options.map((opt) => (
               <button key={opt.value} type="button" onClick={() => { onChange(opt.value); setOpen(false) }}
                 className={cn("flex w-full items-center px-3 py-2 text-[13px] transition-colors hover:bg-[#f0fdf4] whitespace-nowrap",
@@ -220,17 +228,18 @@ function FormSelectSingle({
 
 // ─────────────── UserDrawer ───────────────
 function UserDrawer({
-  mode, editingUser, onClose, onSubmit, roleOptions,
+  mode, editingUser, onClose, onSubmit, roleOptions, activeUsers,
 }: {
   mode: "add" | "edit"
   editingUser: User | null
   onClose: () => void
   onSubmit: (form: UserForm) => void
   roleOptions: { label: string; value: string }[]
+  activeUsers: { id: number; name: string }[]
 }) {
   const [form, setForm] = useState<UserForm>(() =>
     mode === "edit" && editingUser
-      ? { name: editingUser.name, email: editingUser.email, roles: editingUser.roles, status: editingUser.status }
+      ? { name: editingUser.name, email: editingUser.email, roles: editingUser.roles, status: editingUser.status, reviewerId: editingUser.reviewerId }
       : defaultUserForm
   )
   const [errors, setErrors] = useState<UserFormErrors>({})
@@ -243,7 +252,7 @@ function UserDrawer({
   function validate(): boolean {
     const errs: UserFormErrors = {}
     if (mode === "add") {
-      if (!form.name.trim()) errs.name = "请输入姓名"
+      if (!form.name.trim()) errs.name = "请输入用户名"
       if (!form.email.trim()) errs.email = "请输入邮箱"
       else if (!isValidEmail(form.email.trim())) errs.email = "请输入正确的邮箱格式"
     }
@@ -270,13 +279,17 @@ function UserDrawer({
         </div>
         <div className="flex-1 overflow-y-auto px-6 py-5">
           <div className="flex flex-col gap-5">
-            <FormInput label="姓名" placeholder="请输入姓名" value={form.name}
+            <FormInput label="用户名" placeholder="请输入用户名" value={form.name}
               onChange={(v) => setField("name", v)} error={errors.name} required={mode === "add"} readOnly={mode === "edit"} />
             <FormInput label="邮箱" placeholder="请输入邮箱" value={form.email}
               onChange={(v) => setField("email", v)} error={errors.email} required={mode === "add"} readOnly={mode === "edit"} />
             <MultiRoleSelect value={form.roles} onChange={(v) => setField("roles", v)} error={errors.roles} required={mode === "add"} options={roleOptions} />
             <FormSelectSingle label="状态" value={form.status} onChange={(v) => setField("status", v)}
               options={statusOptions} placeholder="请选择状态" error={errors.status} required />
+            <FormSelectSingle label="二审用户" value={form.reviewerId ? String(form.reviewerId) : ""}
+              onChange={(v) => setField("reviewerId", Number(v))}
+              options={activeUsers.filter((u) => String(u.id) !== editingUser?.id).map((u) => ({ label: u.name, value: String(u.id) }))}
+              placeholder="请选择二审用户（可选）" clearable />
           </div>
         </div>
         <div className="flex shrink-0 items-center justify-end gap-2 border-t border-[#e5e7eb] px-6 py-4">
@@ -300,6 +313,7 @@ export default function UserManagement() {
   const [loading, setLoading] = useState(false)
   const [roleIdByName, setRoleIdByName] = useState<Map<string, number>>(new Map())
   const [roleOptions, setRoleOptions] = useState<{ label: string; value: string }[]>(roleOptionsFallback)
+  const [activeUsers, setActiveUsers] = useState<{ id: number; name: string }[]>([])
   const { draft: draftFilters, active: activeFilters, update: updateDraft, apply: applyFilters, reset: resetFilters } = useFilters(defaultFilters)
   const { page: currentPage, pageSize, resetPage, paginationProps } = usePagination()
   const [drawerMode, setDrawerMode] = useState<"add" | "edit" | null>(null)
@@ -328,6 +342,12 @@ export default function UserManagement() {
           setRoleOptions(roleOptionsFallback)
         }
       }
+      try {
+        const uRes = await userApi.list({ page: 1, pageSize: 500, status: "启用" })
+        if (!cancelled) {
+          setActiveUsers((uRes.list ?? []).map((u: any) => ({ id: Number(u.id), name: String(u.name ?? "") })))
+        }
+      } catch { /* ignore */ }
     })()
     return () => {
       cancelled = true
@@ -381,6 +401,7 @@ export default function UserManagement() {
         await userApi.update(Number(editingUser.id), {
           roleIds,
           status: form.status,
+          reviewerId: form.reviewerId || 0,
         })
         closeDrawer()
         await fetchUsers()
@@ -402,13 +423,14 @@ export default function UserManagement() {
           onClose={closeDrawer}
           onSubmit={handleSubmit}
           roleOptions={roleOptions}
+          activeUsers={activeUsers}
         />
       )}
 
       {/* 筛选区 */}
       <div className="shrink-0 rounded-[8px] border border-[#e5e7eb] bg-white px-5 py-4">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
-          <FilterInput label="姓名" placeholder="请输入姓名" value={draftFilters.name}
+          <FilterInput label="用户名" placeholder="请输入用户名" value={draftFilters.name}
             onChange={(v) => updateDraft("name", v)} width="w-[148px]" />
           <FilterInput label="邮箱" placeholder="请输入邮箱" value={draftFilters.email}
             onChange={(v) => updateDraft("email", v)} width="w-[180px]" />
@@ -431,24 +453,15 @@ export default function UserManagement() {
 
       {/* 列表区 */}
       <div className="flex flex-1 flex-col min-h-0 rounded-[8px] border border-[#e5e7eb] bg-white">
-        <div className="flex shrink-0 items-center border-b border-[#e5e7eb] px-5 py-3">
-          {canAdd && (
-            <button
-              onClick={openAdd}
-              className="flex h-[30px] items-center rounded-[6px] bg-[#38c08f] px-4 text-[13px] font-medium text-white transition-colors hover:bg-[#2da87a]"
-            >
-              新增用户
-            </button>
-          )}
-        </div>
         <div className="flex-1 overflow-auto min-h-0">
           <table className="w-full min-w-[760px] border-collapse text-[13px]">
             <thead>
               <tr className="bg-[#f9fafb]">
                 {[
-                  { label: "姓名",     w: "w-[120px]" },
+                  { label: "用户名",   w: "w-[120px]" },
                   { label: "邮箱",     w: "w-[220px]" },
                   { label: "角色",     w: "w-[200px]" },
+                  { label: "二审用户", w: "w-[120px]" },
                   { label: "注册时间", w: "w-[180px]" },
                   { label: "状态",     w: "w-[80px]"  },
                   { label: "操作",     w: "w-[80px]"  },
@@ -463,11 +476,11 @@ export default function UserManagement() {
             <tbody>
               {loading && pageData.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-16 text-center text-[13px] text-[#9ca3af]">加载中…</td>
+                  <td colSpan={7} className="py-16 text-center text-[13px] text-[#9ca3af]">加载中…</td>
                 </tr>
               ) : pageData.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-16 text-center text-[13px] text-[#9ca3af]">暂无数据</td>
+                  <td colSpan={7} className="py-16 text-center text-[13px] text-[#9ca3af]">暂无数据</td>
                 </tr>
               ) : (
                 pageData.map((row, i) => (
@@ -482,6 +495,7 @@ export default function UserManagement() {
                         ))}
                       </div>
                     </td>
+                    <td className="px-4 py-3 text-[12.5px] text-[#4b5563] whitespace-nowrap">{row.reviewerName || "—"}</td>
                     <td className="px-4 py-3 text-[12.5px] text-[#6b7280] whitespace-nowrap">{row.createdAt}</td>
                     <td className="px-4 py-3 whitespace-nowrap"><StatusBadge status={row.status} config={{ "启用": { bg: "bg-[#ecfdf5]", text: "text-[#059669]" }, "禁用": { bg: "bg-[#f3f4f6]", text: "text-[#6b7280]" } }} /></td>
                     <td className="px-4 py-3 whitespace-nowrap">

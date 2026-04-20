@@ -143,17 +143,7 @@ func CreateRevision(c *gin.Context) {
 	var req struct {
 		Opinions []ReviewOpinionReq `json:"opinions" binding:"required"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.FailBadRequest(c, "修改意见必填")
-		return
-	}
-
-	var activeCnt int64
-	model.DB.Model(&model.ProductionTask{}).
-		Where("comic_id = ? AND task_type = ? AND task_progress NOT IN ?", id, consts.TaskTypeRevise, []string{consts.TaskProgressCompleted, consts.TaskProgressCancelled}).
-		Count(&activeCnt)
-	if activeCnt > 0 {
-		response.Fail(c, 400, "该漫剧已有进行中的修改任务")
+	if !BindOrFail(c, &req) {
 		return
 	}
 
@@ -168,50 +158,74 @@ func CreateRevision(c *gin.Context) {
 	}
 	productionRemark := strings.Join(remarkParts, "\n")
 
-	task := model.ProductionTask{
-		TaskName:         comic.EpisodeName,
-		ScriptID:         comic.ScriptID,
-		ComicID:          &comic.ID,
-		EpisodeCount:     comic.EpisodeCount,
-		ArtStyle:         comic.ArtStyle,
-		VisualEffect:     comic.VisualEffect,
-		AspectRatio:      comic.AspectRatio,
-		ProductionRemark: productionRemark,
-		TaskType:         consts.TaskTypeRevise,
-		TaskProgress:     consts.TaskProgressRevision,
-		InitiatorID:      userID,
-		ProducerID:       &comic.ProducerID,
-		ReviewerID:       &userID,
-		PublishTime:      time.Now(),
-	}
-	model.DB.Create(&task)
-
 	snapshot, _ := json.Marshal(req.Opinions)
 	snapshotStr := string(snapshot)
 
-	model.DB.Create(&model.ReviewAuditLog{
-		ProductionTaskID: task.ID,
-		Action:           consts.ActionStartRevision,
-		StageType:        consts.StageRevision,
-		OperatorID:       userID,
-		OpinionSnapshot:  &snapshotStr,
-		CreatedAt:        time.Now(),
-	})
+	var task model.ProductionTask
+	txErr := model.DB.Transaction(func(tx *gorm.DB) error {
+		var activeCnt int64
+		if err := tx.Model(&model.ProductionTask{}).
+			Where("comic_id = ? AND task_type = ? AND task_progress NOT IN ?", id, consts.TaskTypeRevise, []string{consts.TaskProgressCompleted, consts.TaskProgressCancelled}).
+			Count(&activeCnt).Error; err != nil {
+			return err
+		}
+		if activeCnt > 0 {
+			return errConflict
+		}
 
-	// Pre-populate a "修改版" delivery with existing comic assets
-	seedRevisionDelivery(&task, &comic)
+		task = model.ProductionTask{
+			TaskName:         comic.EpisodeName,
+			ScriptID:         comic.ScriptID,
+			ComicID:          &comic.ID,
+			EpisodeCount:     comic.EpisodeCount,
+			ArtStyle:         comic.ArtStyle,
+			VisualEffect:     comic.VisualEffect,
+			AspectRatio:      comic.AspectRatio,
+			ProductionRemark: productionRemark,
+			TaskType:         consts.TaskTypeRevise,
+			TaskProgress:     consts.TaskProgressRevision,
+			InitiatorID:      userID,
+			ProducerID:       &comic.ProducerID,
+			ReviewerID:       &userID,
+			PublishTime:      time.Now(),
+		}
+		if err := tx.Create(&task).Error; err != nil {
+			return err
+		}
+
+		if err := tx.Create(&model.ReviewAuditLog{
+			ProductionTaskID: task.ID,
+			Action:           consts.ActionStartRevision,
+			StageType:        consts.StageRevision,
+			OperatorID:       userID,
+			OpinionSnapshot:  &snapshotStr,
+			CreatedAt:        time.Now(),
+		}).Error; err != nil {
+			return err
+		}
+
+		return seedRevisionDeliveryTx(tx, &task, &comic)
+	})
+	if txErr != nil {
+		if txErr == errConflict {
+			response.Fail(c, 400, "该漫剧已有进行中的修改任务")
+			return
+		}
+		response.Fail(c, 500, "发起修改失败，请重试")
+		return
+	}
 
 	response.OK(c, task)
 }
 
-func seedRevisionDelivery(task *model.ProductionTask, comic *model.Comic) {
-	// Find the original 终版 delivery to copy file names and sizes
+func seedRevisionDeliveryTx(tx *gorm.DB, task *model.ProductionTask, comic *model.Comic) error {
+	// Find the original 分集 delivery to copy file names and sizes
 	origFiles := make(map[string]*model.TaskDeliveryFile) // keyed by fileType+episodeNum
 	var origTask model.ProductionTask
-	if model.DB.Where("script_id = ? AND task_type = ? AND task_progress = ?",
+	if tx.Where("script_id = ? AND task_type = ? AND task_progress = ?",
 		comic.ScriptID, consts.TaskTypeProduce, consts.TaskProgressCompleted).Order("updated_at DESC").First(&origTask).Error == nil {
 		var origDelivery model.TaskDelivery
-		if model.DB.Where("task_id = ? AND delivery_type = ?", origTask.ID, consts.StageFinal).
+		if tx.Where("task_id = ? AND delivery_type = ?", origTask.ID, consts.StageFinal).
 			Preload("Files").First(&origDelivery).Error == nil {
 			for i := range origDelivery.Files {
 				f := &origDelivery.Files[i]
@@ -225,7 +239,6 @@ func seedRevisionDelivery(task *model.ProductionTask, comic *model.Comic) {
 		if f, ok := origFiles[fileType+":"+strconv.Itoa(episodeNum)]; ok {
 			return f.FileName, f.FileSize
 		}
-		// Extract filename from URL path as last resort
 		parts := strings.Split(fallbackURL, "/")
 		return parts[len(parts)-1], 0
 	}
@@ -236,63 +249,76 @@ func seedRevisionDelivery(task *model.ProductionTask, comic *model.Comic) {
 		EpisodeName:  comic.EpisodeName,
 		CoverURL:     comic.CoverURL,
 	}
-	model.DB.Create(&delivery)
+	if err := tx.Create(&delivery).Error; err != nil {
+		return err
+	}
 
 	if comic.CoverURL != "" {
-		name, size := lookup("封面图", 0, comic.CoverURL)
-		model.DB.Create(&model.TaskDeliveryFile{
+		name, size := lookup(consts.FileTypeCover, 0, comic.CoverURL)
+		if err := tx.Create(&model.TaskDeliveryFile{
 			DeliveryID: delivery.ID,
-			FileType:   "封面图",
+			FileType:   consts.FileTypeCover,
 			FileURL:    comic.CoverURL,
 			FileName:   name,
 			FileSize:   size,
-		})
+		}).Error; err != nil {
+			return err
+		}
 	}
 
 	for _, img := range comic.CopyrightImages {
 		if img != "" {
-			name, size := lookup("版权证明", 0, img)
-			model.DB.Create(&model.TaskDeliveryFile{
+			name, size := lookup(consts.FileTypeCopyright, 0, img)
+			if err := tx.Create(&model.TaskDeliveryFile{
 				DeliveryID: delivery.ID,
-				FileType:   "版权证明",
+				FileType:   consts.FileTypeCopyright,
 				FileURL:    img,
 				FileName:   name,
 				FileSize:   size,
-			})
+			}).Error; err != nil {
+				return err
+			}
 		}
 	}
 
 	var episodes []model.ComicEpisode
-	model.DB.Where("comic_id = ?", comic.ID).Order("episode_num ASC").Find(&episodes)
+	if err := tx.Where("comic_id = ?", comic.ID).Order("episode_num ASC").Find(&episodes).Error; err != nil {
+		return err
+	}
 
 	for _, ep := range episodes {
 		if ep.SubtitledURL != "" {
-			name, size := lookup("有字幕视频", ep.EpisodeNum, ep.SubtitledURL)
+			name, size := lookup(consts.FileTypeWithSubtitle, ep.EpisodeNum, ep.SubtitledURL)
 			if size == 0 {
 				size = ep.FileSize
 			}
-			model.DB.Create(&model.TaskDeliveryFile{
+			if err := tx.Create(&model.TaskDeliveryFile{
 				DeliveryID: delivery.ID,
-				FileType:   "有字幕视频",
+				FileType:   consts.FileTypeWithSubtitle,
 				EpisodeNum: ep.EpisodeNum,
 				FileURL:    ep.SubtitledURL,
 				FileName:   name,
 				FileSize:   size,
-			})
+			}).Error; err != nil {
+				return err
+			}
 		}
 		if ep.RawURL != "" {
-			name, size := lookup("无字幕视频", ep.EpisodeNum, ep.RawURL)
+			name, size := lookup(consts.FileTypeNoSubtitle, ep.EpisodeNum, ep.RawURL)
 			if size == 0 {
 				size = ep.FileSize
 			}
-			model.DB.Create(&model.TaskDeliveryFile{
+			if err := tx.Create(&model.TaskDeliveryFile{
 				DeliveryID: delivery.ID,
-				FileType:   "无字幕视频",
+				FileType:   consts.FileTypeNoSubtitle,
 				EpisodeNum: ep.EpisodeNum,
 				FileURL:    ep.RawURL,
 				FileName:   name,
 				FileSize:   size,
-			})
+			}).Error; err != nil {
+				return err
+			}
 		}
 	}
+	return nil
 }

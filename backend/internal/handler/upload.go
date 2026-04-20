@@ -44,8 +44,7 @@ func buildKey(req PresignReq) (dir, key string) {
 
 func GetPresignURL(c *gin.Context) {
 	var req PresignReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.FailBadRequest(c, "参数错误")
+	if !BindOrFail(c, &req) {
 		return
 	}
 

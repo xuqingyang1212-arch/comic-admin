@@ -9,7 +9,7 @@ import { bookApi, scriptDraftApi } from "@/lib/api"
 import { toast } from "@/lib/toast"
 import { formatDateTime } from "@/lib/format"
 import { usePerm } from "@/components/admin-layout"
-import { type BookDetail, sharedParagraphs, TRIAL_PARAGRAPH_INDEX } from "@/lib/script-editor"
+import { type BookDetail, TRIAL_PARAGRAPH_INDEX } from "@/lib/script-editor"
 import { ScriptEditorDrawer } from "@/components/script-editor"
 import { useFilters } from "@/hooks/use-filters"
 import { usePagination } from "@/hooks/use-pagination"
@@ -35,35 +35,6 @@ interface FilterForm {
   listingDateRange: [string, string] | []
   hasScript: string
 }
-
-// ─── Mock Table Data (cleared) ───────────────────────────────────────────────
-
-const bookTableMock: BookRow[] = []
-
-// ─── Book Detail Builder ──────────────────────────────────────────────────────
-
-const BREAKPOINT_PCT_MAP: Record<string, number> = {}
-
-function buildDetail(row: BookRow): BookDetail {
-  const paragraphs = sharedParagraphs
-  const pct = BREAKPOINT_PCT_MAP[row.bookId]
-  const trialWordCount = pct
-    ? Math.round(row.wordCount * pct / 100)
-    : 704
-  const ratio = pct ?? Math.round((trialWordCount / row.wordCount) * 100)
-  return {
-    bookId: row.bookId,
-    bookName: row.bookName,
-    totalWordCount: row.wordCount,
-    trialWordCount,
-    breakpointLabel: `原书：试读字数${trialWordCount}字，占全文${ratio}%`,
-    contentParagraphs: paragraphs,
-  }
-}
-
-const bookDetailMockMap: Record<string, BookDetail> = Object.fromEntries(
-  bookTableMock.map((row) => [row.bookId, buildDetail(row)])
-)
 
 // ─── Filter Default ───────────────────────────────────────────────────────────
 
@@ -230,7 +201,6 @@ function BookDetailDrawer({
 
 // ─── HasScriptSelect ─────────────────────────────────────────────────────────
 
-export { bookDetailMockMap }
 
 
 

@@ -1,9 +1,16 @@
 "use client"
 // 审核管理 > 剧本审核
-import { useState, useMemo, useRef, useCallback, useEffect } from "react"
+import { useState, useMemo, useRef, useCallback, useEffect, useLayoutEffect } from "react"
 import { Search, RotateCcw, ChevronDown, CheckCircle, X, Bold, Underline, Strikethrough, Plus } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { SelectFilter, PublishTaskDrawer } from "@/components/shared"
+import {
+  SelectFilter,
+  PublishTaskDrawer,
+  ScriptAuditTimeline,
+  mapScriptAuditLogsToNodes,
+  type ScriptAuditNode,
+  type ScriptAuditLogDTO,
+} from "@/components/shared"
 import { formatDateTime } from "@/lib/format"
 import { scriptAuditApi, scriptDraftApi, bookApi } from "@/lib/api"
 import { toast } from "@/lib/toast"
@@ -22,12 +29,8 @@ import {
 
 // ─── 类型 ──────────────────────────────────────────────────────────────────────
 
-interface ApprovalNode {
-  time: string
-  operator: string
-  action: string
-  remark?: string
-}
+// 审批节点直接复用共享类型；本文件内保留 ApprovalNode 别名以减少重命名噪音。
+type ApprovalNode = ScriptAuditNode
 
 interface ScriptRow {
   id: string
@@ -72,22 +75,6 @@ interface PublishInfo {
 }
 
 type ScriptType = ScriptRow["scriptType"]
-
-const formatAuditTime = formatDateTime
-
-function mapAuditLogToNode(log: {
-  createdAt?: string
-  action?: string
-  opinion?: string
-  operator?: { name?: string }
-}): ApprovalNode {
-  return {
-    time: formatAuditTime(log.createdAt),
-    operator: log.operator?.name ?? "",
-    action: log.action ?? "",
-    remark: log.opinion?.trim() ? log.opinion : undefined,
-  }
-}
 
 type ApiScriptDraft = {
   id: number
@@ -185,21 +172,7 @@ const auditStatusStyle: Record<string, { bg: string; text: string }> = {
   "审核不通过": { bg: "bg-[#fef2f2]", text: "text-[#dc2626]" },
 }
 
-// 审批进度节点样式
-const approvalActionStyle: Record<string, { dot: string; bg: string; text: string }> = {
-  "提交任务": { dot: "border-[#9ca3af] bg-white", bg: "bg-[#f9fafb]", text: "text-[#374151]" },
-  "提交审核": { dot: "border-[#9ca3af] bg-white", bg: "bg-[#f9fafb]", text: "text-[#374151]" },
-  "领取任务": { dot: "border-[#38c08f] bg-white", bg: "bg-[#f0fdf4]", text: "text-[#15803d]" },
-  "审核中": { dot: "border-[#f97316] bg-white", bg: "bg-[#fff7ed]", text: "text-[#ea580c]" },
-  "驳回修改": { dot: "border-[#d97706] bg-white", bg: "bg-[#fffbeb]", text: "text-[#d97706]" },
-  "审核通过": { dot: "border-[#059669] bg-[#059669]", bg: "bg-[#ecfdf5]", text: "text-[#059669]" },
-  "审核不通过": { dot: "border-[#dc2626] bg-[#dc2626]", bg: "bg-[#fef2f2]", text: "text-[#dc2626]" },
-}
-
-// ─── Toast (removed, using global toast) ──────────────────────────────────────
-
-
-// ─── 审批进度抽屉 ──────────────────────────────────────────────────────────────
+// ─── 审批进度抽屉（壳层，内部时间线复用 ScriptAuditTimeline）───────────────────
 
 function ApprovalProgressDrawer({
   row,
@@ -214,11 +187,8 @@ function ApprovalProgressDrawer({
     <>
       <div className="fixed inset-0 z-[40] bg-black/20" onClick={onClose} />
       <div className="fixed right-0 top-0 z-[50] flex h-full w-[420px] flex-col bg-white shadow-2xl">
-        {/* 顶部 */}
         <div className="flex items-center justify-between border-b border-[#e5e7eb] px-5 py-4">
-          <div>
-            <p className="text-[14px] font-semibold text-[#111827]">审核记录</p>
-          </div>
+          <p className="text-[14px] font-semibold text-[#111827]">审核记录</p>
           <button
             onClick={onClose}
             className="flex h-7 w-7 items-center justify-center rounded-[6px] text-[#9ca3af] hover:bg-[#f3f4f6] hover:text-[#374151] transition-colors"
@@ -226,48 +196,11 @@ function ApprovalProgressDrawer({
             <X size={15} />
           </button>
         </div>
-        {/* 时间线 */}
+
         <div className="flex-1 overflow-y-auto px-5 py-5">
-          {row.approvalProgress.length === 0 ? (
-            <div className="py-16 text-center text-[13px] text-[#9ca3af]">暂无审批进度</div>
-          ) : (
-            <div className="relative pl-5">
-              {/* 竖线 */}
-              <div className="absolute left-[7px] top-3 bottom-3 w-px bg-[#e5e7eb]" />
-              <div className="flex flex-col gap-4">
-                {row.approvalProgress.map((node, i) => {
-                  const style = approvalActionStyle[node.action] ?? {
-                    dot: "border-[#9ca3af] bg-white",
-                    bg: "bg-[#f9fafb]",
-                    text: "text-[#374151]",
-                  }
-                  return (
-                    <div key={i} className="relative">
-                      <span
-                        className={cn(
-                          "absolute -left-[13px] top-[6px] h-2.5 w-2.5 rounded-full border-2",
-                          style.dot
-                        )}
-                      />
-                      <div className={cn("rounded-[6px] border border-[#f3f4f6] px-4 py-3", style.bg)}>
-                        <div className="flex items-center justify-between">
-                          <span className={cn("text-[12.5px] font-medium", style.text)}>{node.action}</span>
-                          <span className="text-[11.5px] text-[#9ca3af]">{node.operator}</span>
-                        </div>
-                        {node.remark && (
-                          <p className="mt-1.5 text-[12px] leading-relaxed text-[#6b7280] whitespace-pre-wrap">{node.remark}</p>
-                        )}
-                        <p className="mt-1.5 text-[11px] text-[#9ca3af]">{node.time}</p>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          )}
+          <ScriptAuditTimeline records={row.approvalProgress} />
         </div>
 
-        {/* 底部 */}
         <div className="border-t border-[#e5e7eb] px-5 py-3">
           <button
             onClick={onClose}
@@ -338,8 +271,9 @@ function ScriptDetailDrawer({
         const breakpointLabel = book?.payBreakpoint || ""
         const built = buildInitialNodes(paragraphs, TRIAL_PARAGRAPH_INDEX, breakpointLabel, dividerPositions)
         setNodes(built)
-      } catch {
+      } catch (err) {
         setNodes([])
+        toast.errorFrom(err, "剧本内容加载失败")
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -405,10 +339,6 @@ function ScriptDetailDrawer({
   )
 }
 
-const hallMock: ScriptRow[] = []
-
-const mineMock: MyAuditRow[] = []
-
 // ─── 任务大厅 Tab ──────────────────────────────────────────────────────────────
 
 function TaskHallTab({
@@ -423,7 +353,6 @@ function TaskHallTab({
   const [hallData, setHallData] = useState<ScriptRow[]>([])
   const [hallTotal, setHallTotal] = useState(0)
   const [hallLoading, setHallLoading] = useState(false)
-  const [openAuditAfterClaimId, setOpenAuditAfterClaimId] = useState<string | null>(null)
   const [progressRow, setProgressRow] = useState<ScriptRow | null>(null)
   const [detailRow, setDetailRow] = useState<ScriptRow | null>(null)
   const [auditRow, setAuditRow] = useState<ScriptRow | null>(null)
@@ -461,28 +390,21 @@ function TaskHallTab({
     void fetchHall()
   }, [fetchHall, listRefreshKey])
 
-  useEffect(() => {
-    if (!openAuditAfterClaimId || hallLoading) return
-    const r = hallData.find((x) => x.id === openAuditAfterClaimId)
-    if (r) setAuditRow(r)
-    setOpenAuditAfterClaimId(null)
-  }, [hallData, hallLoading, openAuditAfterClaimId])
-
   async function openProgressRow(row: ScriptRow) {
     try {
       const logs = await scriptDraftApi.auditLogs(Number(row.id))
-      const arr = Array.isArray(logs) ? logs : []
-      setProgressRow({ ...row, approvalProgress: arr.map(mapAuditLogToNode) })
+      const arr = Array.isArray(logs) ? (logs as ScriptAuditLogDTO[]) : []
+      setProgressRow({ ...row, approvalProgress: mapScriptAuditLogsToNodes(arr) })
     } catch {
       setProgressRow({ ...row, approvalProgress: [] })
     }
   }
 
-  async function handleClaim(rowId: string) {
+  async function handleClaim(row: ScriptRow) {
     try {
-      await scriptAuditApi.claim(Number(rowId))
+      await scriptAuditApi.claim(Number(row.id))
       toast.success("领取成功，请进行审核")
-      setOpenAuditAfterClaimId(rowId)
+      setAuditRow({ ...row, auditStatus: "审核中" })
       onMutate()
     } catch (e) {
       toast.errorFrom(e, "领取失败")
@@ -707,7 +629,7 @@ function TaskHallTab({
                           {isClaimable
                             ? (
                               <button
-                                onClick={() => handleClaim(row.id)}
+                                onClick={() => handleClaim(row)}
                                 className="rounded-[4px] border border-[#38c08f] px-2.5 py-1 text-[12px] font-medium text-[#38c08f] hover:bg-[#f0fdf4] transition-colors whitespace-nowrap"
                               >
                                 领取任务
@@ -822,7 +744,7 @@ function ReviewParagraphEditor({ node, onChange }: {
   const isComposing = useRef(false)
   const lastHtml = useRef(node.html)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (ref.current && ref.current.innerHTML !== node.html) {
       ref.current.innerHTML = node.html
     }
@@ -1175,8 +1097,9 @@ function AuditHandleDrawer({
         const breakpointLabel = book?.payBreakpoint || ""
         const built = buildInitialNodes(paragraphs, TRIAL_PARAGRAPH_INDEX, breakpointLabel, dividerPositions)
         setNodes(built)
-      } catch {
+      } catch (err) {
         setNodes([])
+        toast.errorFrom(err, "剧本内容加载失败")
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -1527,39 +1450,13 @@ function MyAuditRecordDrawer({
       <div className="fixed inset-0 z-[40] bg-black/20" onClick={onClose} />
       <div className="fixed right-0 top-0 z-[50] flex h-full w-[420px] flex-col bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-[#e5e7eb] px-5 py-4">
-          <div>
-            <p className="text-[14px] font-semibold text-[#111827]">审核记录</p>
-          </div>
+          <p className="text-[14px] font-semibold text-[#111827]">审核记录</p>
           <button onClick={onClose} className="flex h-7 w-7 items-center justify-center rounded-[6px] text-[#9ca3af] hover:bg-[#f3f4f6] hover:text-[#374151] transition-colors">
             <X size={15} />
           </button>
         </div>
         <div className="flex-1 overflow-y-auto px-5 py-5">
-          {row.auditRecords.length === 0 ? (
-            <div className="py-16 text-center text-[13px] text-[#9ca3af]">暂无审核记录</div>
-          ) : (
-            <div className="relative pl-5">
-              <div className="absolute left-[7px] top-3 bottom-3 w-px bg-[#e5e7eb]" />
-              <div className="flex flex-col gap-4">
-                {row.auditRecords.map((node, i) => {
-                  const style = approvalActionStyle[node.action] ?? { dot: "border-[#9ca3af] bg-white", bg: "bg-[#f9fafb]", text: "text-[#374151]" }
-                  return (
-                    <div key={i} className="relative">
-                      <span className={cn("absolute -left-[13px] top-[6px] h-2.5 w-2.5 rounded-full border-2", style.dot)} />
-                      <div className={cn("rounded-[6px] border border-[#f3f4f6] px-4 py-3", style.bg)}>
-                        <div className="flex items-center justify-between">
-                          <span className={cn("text-[12.5px] font-medium", style.text)}>{node.action}</span>
-                          <span className="text-[11.5px] text-[#9ca3af]">{node.operator}</span>
-                        </div>
-                        {node.remark && <p className="mt-1.5 text-[12px] leading-relaxed text-[#6b7280] whitespace-pre-wrap">{node.remark}</p>}
-                        <p className="mt-1.5 text-[11px] text-[#9ca3af]">{node.time}</p>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          )}
+          <ScriptAuditTimeline records={row.auditRecords} />
         </div>
         <div className="border-t border-[#e5e7eb] px-5 py-3">
           <button onClick={onClose} className="w-full rounded-[6px] border border-[#d1d5db] py-1.5 text-[13px] text-[#374151] hover:bg-[#f5f6f7] transition-colors">
@@ -1635,8 +1532,8 @@ function MyReviewTab({
   async function openRecordRow(row: MyAuditRow) {
     try {
       const logs = await scriptDraftApi.auditLogs(Number(row.id))
-      const arr = Array.isArray(logs) ? logs : []
-      setRecordRow({ ...row, auditRecords: arr.map(mapAuditLogToNode) })
+      const arr = Array.isArray(logs) ? (logs as ScriptAuditLogDTO[]) : []
+      setRecordRow({ ...row, auditRecords: mapScriptAuditLogsToNodes(arr) })
     } catch {
       setRecordRow({ ...row, auditRecords: [] })
     }

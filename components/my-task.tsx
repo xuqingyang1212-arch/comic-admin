@@ -3,12 +3,21 @@
 import { useState, useRef, useEffect, useCallback } from "react"
 import { Search, RotateCcw, ChevronDown, X, Upload, ZoomIn } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { productionTaskApi, uploadApi } from "@/lib/api"
+import { productionTaskApi, uploadApi, assetUrl } from "@/lib/api"
 import { toast } from "@/lib/toast"
 import { VideoPlayerModal, VideoThumbnail, RemoteVideoThumbnail } from "@/components/video-thumbnail"
 import { ImageThumbnail, ImageUploadWithProgress, UploadProgressBar } from "@/components/image-thumbnail"
 import type { UploadFileState, RemoteFileState } from "@/components/video-thumbnail"
-import { FilterInput, SelectFilter, ImageGalleryModal } from "@/components/shared"
+import {
+  FilterInput,
+  SelectFilter,
+  ImageGalleryModal,
+  AuditRecordTimeline,
+  mapAuditLogsToRecords,
+  type AuditRecord,
+  type AuditOpinionRecord,
+  type AuditLogDTO,
+} from "@/components/shared"
 import { TASK_TYPE_OPTIONS, MY_TASK_PROGRESS_BY_TYPE } from "@/lib/constants"
 import { formatDateTime } from "@/lib/format"
 import { ListPagination } from "@/components/list-pagination"
@@ -27,38 +36,9 @@ import {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type AuditStatus =
-  | "领取任务"
-  | "提交审核"
-  | "驳回修改"
-  | "审核通过"
-  | "发起成片修改"
-  | "已取消"
-
-type AuditStageType = "初版" | "终版" | "修改版"
-
-interface OpinionImage {
-  id: string
-  dataUrl: string
-  name: string
-}
-
-interface OpinionRecord {
-  id: string
-  text: string
-  images: OpinionImage[]
-}
-
-interface AuditRecord {
-  id: number
-  status: AuditStatus
-  time: string
-  operator: string
-  remark?: string
-  stageType: AuditStageType
-  round?: number  // 用于标记第几轮修改版
-  opinionRecords?: OpinionRecord[]
-}
+// AuditRecord / AuditOpinionRecord / AuditLogDTO are imported from
+// `@/components/shared`. They are the canonical types used by both 漫剧制作 and
+// 漫剧审核 audit-record timelines so the two views stay consistent.
 
 interface MyTaskRow {
   id: number
@@ -79,7 +59,7 @@ interface MyTaskRow {
   reviewEpisodeName?: string
 }
 
-type UploadType = "上传初版" | "上传终版" | "上传修改版"
+type UploadType = "上传全集" | "上传分集" | "上传返修版"
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -107,6 +87,7 @@ function mapProductionTaskToRow(task: Record<string, unknown>): MyTaskRow {
     id: number
     taskName?: string
     scriptId?: number | string
+    script?: { scriptId?: number | string }
     episodeCount?: number
     artStyle?: string
     visualEffect?: string
@@ -116,6 +97,7 @@ function mapProductionTaskToRow(task: Record<string, unknown>): MyTaskRow {
     taskProgress?: string
     reviewer?: { name?: string }
     producer?: { name?: string }
+    reviewEpisodeName?: string
   }
   const tt = t.taskType === "修改" ? "修改" : "制作"
   return {
@@ -134,47 +116,6 @@ function mapProductionTaskToRow(task: Record<string, unknown>): MyTaskRow {
     auditRecords: [],
     reviewEpisodeName: t.reviewEpisodeName ? String(t.reviewEpisodeName) : undefined,
   }
-}
-
-function mapAuditLogsToRecords(logs: Array<Record<string, unknown>>): AuditRecord[] {
-  return logs.map((log) => {
-    const l = log as {
-      id: number
-      action: string
-      stageType: string
-      createdAt: string
-      operator?: { name?: string }
-      opinionSnapshot?: string
-    }
-    let opinionRecords: OpinionRecord[] | undefined
-    if (l.opinionSnapshot) {
-      try {
-        const parsed = JSON.parse(l.opinionSnapshot) as { content?: string; images?: string[] }[]
-        if (Array.isArray(parsed)) {
-          opinionRecords = parsed.map((op, i) => ({
-            id: `snap-${l.id}-${i}`,
-            text: op.content ?? "",
-            images: (op.images ?? []).map((url, j) => ({
-              id: `img-${l.id}-${i}-${j}`,
-              dataUrl: url,
-              name: url.split("/").pop() || `image-${j}.jpg`,
-            })),
-          }))
-        }
-      } catch {
-        /* ignore malformed snapshot */
-      }
-    }
-    const status = l.action as AuditStatus
-    return {
-      id: l.id,
-      status,
-      time: formatApiDateTime(l.createdAt),
-      operator: l.operator?.name ? String(l.operator.name) : "",
-      stageType: l.stageType as AuditStageType,
-      opinionRecords,
-    }
-  })
 }
 
 function uploadToPresignedUrl(
@@ -221,12 +162,13 @@ const taskTypeBadge: Record<string, { bg: string; text: string; border: string }
 }
 
 const taskProgressBadge: Record<string, { bg: string; text: string; border: string }> = {
-  "初版制作中": { bg: "bg-[#fffbeb]", text: "text-[#d97706]", border: "border-[#fde68a]" },
-  "初版审核中": { bg: "bg-[#fdf4ff]", text: "text-[#9333ea]", border: "border-[#e9d5ff]" },
-  "终版制作中": { bg: "bg-[#fff7ed]", text: "text-[#c2410c]", border: "border-[#fed7aa]" },
-  "终版审核中": { bg: "bg-[#fdf2f8]", text: "text-[#be185d]", border: "border-[#fbcfe8]" },
-  "修改版制作中": { bg: "bg-[#fffbeb]", text: "text-[#d97706]", border: "border-[#fde68a]" },
-  "修改版审核中": { bg: "bg-[#fdf4ff]", text: "text-[#9333ea]", border: "border-[#e9d5ff]" },
+  "全集制作中": { bg: "bg-[#fffbeb]", text: "text-[#d97706]", border: "border-[#fde68a]" },
+  "全集审核中": { bg: "bg-[#fdf4ff]", text: "text-[#9333ea]", border: "border-[#e9d5ff]" },
+  "分集制作中": { bg: "bg-[#fff7ed]", text: "text-[#c2410c]", border: "border-[#fed7aa]" },
+  "分集审核中": { bg: "bg-[#fdf2f8]", text: "text-[#be185d]", border: "border-[#fbcfe8]" },
+  "二审审核中": { bg: "bg-[#fef3c7]", text: "text-[#d97706]", border: "border-[#fde68a]" },
+  "返修版制作中": { bg: "bg-[#fffbeb]", text: "text-[#d97706]", border: "border-[#fde68a]" },
+  "返修版审核中": { bg: "bg-[#fdf4ff]", text: "text-[#9333ea]", border: "border-[#e9d5ff]" },
   "已完成": { bg: "bg-[#f0fdf4]", text: "text-[#16a34a]", border: "border-[#bbf7d0]" },
   "已取消": { bg: "bg-[#f3f4f6]", text: "text-[#6b7280]", border: "border-[#e5e7eb]" },
 }
@@ -246,11 +188,6 @@ function StageBadge({ label, map }: { label: string; map: Record<string, { bg: s
     </span>
   )
 }
-
-// ─── Script Detail Mock Map ───────────────────────────────────────────────────
-
-// 按 row.id 映射付费卡点集数（与任务大厅保持一致）
-const myTaskScriptDetailMockMap: Record<number, string> = {}
 
 // ─── Script Detail Content Builder ───────────────────────────────────────────
 
@@ -316,7 +253,7 @@ function MyTaskScriptDetailDrawer({
     productionTaskApi
       .auditLogs(row.id)
       .then((logs) => {
-        if (!cancelled) setDetailAuditRecords(mapAuditLogsToRecords(logs as Record<string, unknown>[]))
+        if (!cancelled) setDetailAuditRecords(mapAuditLogsToRecords(logs as AuditLogDTO[]))
       })
       .catch(() => {
         if (!cancelled) setDetailAuditRecords([])
@@ -326,10 +263,7 @@ function MyTaskScriptDetailDrawer({
     }
   }, [row.id])
 
-  const paidEpisode = ""
-  const paidEpisodeNum = paidEpisode
-    ? parseInt(paidEpisode.replace(/[^0-9]/g, ""), 10)
-    : null
+  const paidEpisodeNum: number | null = null
 
   const nodes = (() => {
     const content = row.scriptContent ?? ""
@@ -383,7 +317,7 @@ function MyTaskScriptDetailDrawer({
   ]
 
   // 修改类型：从 auditRecords 提取"发起成片修改/驳回修改"节点的 opinionRecords
-  const modifyOpinionRecords: (OpinionRecord & { recordId: string })[] = []
+  const modifyOpinionRecords: (AuditOpinionRecord & { recordId: string })[] = []
   if (row.taskType === "修改") {
     detailAuditRecords.forEach((rec) => {
       if ((rec.status === "发起成片修改" || rec.status === "驳回修改") && rec.opinionRecords) {
@@ -393,7 +327,12 @@ function MyTaskScriptDetailDrawer({
           }
         })
       } else if ((rec.status === "发起成片修改" || rec.status === "驳回修改") && rec.remark) {
-        modifyOpinionRecords.push({ id: `r-${rec.id}`, text: rec.remark, images: [], recordId: `r-${rec.id}` } as any)
+        modifyOpinionRecords.push({
+          id: `r-${rec.id}`,
+          text: rec.remark,
+          images: [],
+          recordId: `r-${rec.id}`,
+        })
       }
     })
   }
@@ -473,7 +412,7 @@ function MyTaskScriptDetailDrawer({
                     modifyOpinionRecords.length > 0 ? (
                       <div className="mt-1.5 flex flex-col gap-2">
                         {modifyOpinionRecords.map((op) => (
-                          <div key={(op as any).recordId} className="rounded-[5px] border border-[#fef08a] bg-[#fffbeb] px-3 py-2.5">
+                          <div key={op.recordId} className="rounded-[5px] border border-[#fef08a] bg-[#fffbeb] px-3 py-2.5">
                             {op.text.trim() && (
                               <p className="text-[12px] leading-relaxed text-[#78350f] whitespace-pre-wrap">{op.text}</p>
                             )}
@@ -519,34 +458,7 @@ function MyTaskScriptDetailDrawer({
 
 // ─── Audit Record Drawer ──────────────────────────────────────────────────────
 
-// 状态 → 节点圆点颜色
-const auditStatusDotColor: Record<AuditStatus, string> = {
-  "领取任务": "bg-[#6366f1] border-[#c7d2fe]",
-  "提交审核": "bg-[#9ca3af] border-[#d1d5db]",
-  "驳回修改": "bg-[#f59e0b] border-[#fde68a]",
-  "审核通过": "bg-[#38c08f] border-[#bbf7d0]",
-  "发起成片修改": "bg-[#94a3b8] border-[#cbd5e1]",
-  "已取消": "bg-[#9ca3af] border-[#d1d5db]",
-}
-
-const auditStatusCardStyle: Record<AuditStatus, { bg: string; border: string; titleColor: string }> = {
-  "领取任务": { bg: "bg-[#eef2ff]", border: "border-[#c7d2fe]", titleColor: "text-[#4338ca]" },
-  "提交审核": { bg: "bg-white", border: "border-[#e5e7eb]", titleColor: "text-[#374151]" },
-  "驳回修改": { bg: "bg-[#fefce8]", border: "border-[#fef08a]", titleColor: "text-[#a16207]" },
-  "审核通过": { bg: "bg-[#f0fdf4]", border: "border-[#bbf7d0]", titleColor: "text-[#16a34a]" },
-  "发起成片修改": { bg: "bg-[#f8fafc]", border: "border-[#e2e8f0]", titleColor: "text-[#475569]" },
-  "已取消": { bg: "bg-[#f3f4f6]", border: "border-[#e5e7eb]", titleColor: "text-[#6b7280]" },
-}
-
-// 阶段标签
-const stageTypeLabel: Record<AuditStageType, { text: string; color: string }> = {
-  "初版": { text: "初版", color: "text-[#2563eb] bg-[#eff6ff] border-[#bfdbfe]" },
-  "终版": { text: "终版", color: "text-[#16a34a] bg-[#f0fdf4] border-[#bbf7d0]" },
-  "修改版": { text: "修改版", color: "text-[#ea580c] bg-[#fff7ed] border-[#fed7aa]" },
-}
-
 function AuditRecordDrawer({ row, onClose }: { row: MyTaskRow; onClose: () => void }) {
-  const [previewGallery, setPreviewGallery] = useState<{ images: string[]; index: number } | null>(null)
   const [auditRecords, setAuditRecords] = useState<AuditRecord[]>(row.auditRecords)
   const [logsLoading, setLogsLoading] = useState(true)
 
@@ -556,7 +468,7 @@ function AuditRecordDrawer({ row, onClose }: { row: MyTaskRow; onClose: () => vo
     productionTaskApi
       .auditLogs(row.id)
       .then((logs) => {
-        if (!cancelled) setAuditRecords(mapAuditLogsToRecords(logs as Record<string, unknown>[]))
+        if (!cancelled) setAuditRecords(mapAuditLogsToRecords(logs as AuditLogDTO[]))
       })
       .catch(() => {
         if (!cancelled) setAuditRecords([])
@@ -573,8 +485,6 @@ function AuditRecordDrawer({ row, onClose }: { row: MyTaskRow; onClose: () => vo
     <>
       <div className="fixed inset-0 z-[90] bg-black/40" onClick={onClose} />
       <div className="fixed right-0 top-0 z-[100] flex h-full w-[420px] flex-col bg-white shadow-xl">
-
-        {/* 头部 */}
         <div className="flex shrink-0 items-center justify-between border-b border-[#e5e7eb] px-5 py-4">
           <span className="text-[15px] font-semibold text-[#111827]">审核记录</span>
           <button
@@ -586,127 +496,15 @@ function AuditRecordDrawer({ row, onClose }: { row: MyTaskRow; onClose: () => vo
           </button>
         </div>
 
-        {/* 可滚动主体 */}
         <div className="flex-1 overflow-y-auto px-5 py-5">
-          {logsLoading ? (
-            <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
-              <p className="text-[13px] text-[#9ca3af]">加载中…</p>
-            </div>
-          ) : auditRecords.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#f3f4f6]">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-5 w-5 text-[#9ca3af]">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6M9 8h.01M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" />
-                </svg>
-              </div>
-              <p className="text-[13px] text-[#9ca3af]">暂无审核记录</p>
-            </div>
-          ) : (
-            <div className="relative pl-6">
-              {/* 竖向时间线 */}
-              <div className="absolute left-[7px] top-2 bottom-2 w-px bg-[#e5e7eb]" />
-
-              {/* 按 taskType 过滤：制作展示初版+终版，修改展示修改版 */}
-              {auditRecords
-                .filter((r) =>
-                  row.taskType === "制作"
-                    ? r.stageType === "初版" || r.stageType === "终版"
-                    : r.stageType === "修改版"
-                )
-                .map((rec, idx, arr) => {
-                  const card = auditStatusCardStyle[rec.status] ?? auditStatusCardStyle["提交审核"]
-                  const dot = auditStatusDotColor[rec.status] ?? "bg-[#9ca3af] border-[#d1d5db]"
-                  const stage = stageTypeLabel[rec.stageType] ?? { text: rec.stageType, color: "text-[#6b7280] bg-[#f3f4f6] border-[#e5e7eb]" }
-                  const isOpinionNode = rec.status === "驳回修改" || rec.status === "发起成片修改"
-                  const hasOpinionRecords = isOpinionNode && rec.opinionRecords && rec.opinionRecords.length > 0
-                  const isLast = idx === arr.length - 1
-
-                  return (
-                    <div key={rec.id} className={cn("relative", isLast ? "mb-0" : "mb-4")}>
-                      {/* 节点圆点 */}
-                      <div className={cn(
-                        "absolute -left-6 top-[11px] h-[13px] w-[13px] rounded-full border-2",
-                        dot
-                      )} />
-
-                      {/* 内容卡片 */}
-                      <div className={cn(
-                        "rounded-[6px] border px-3.5 py-3",
-                        card.bg, card.border
-                      )}>
-                        {/* 第一行：状态标题 + 阶段标签 + 操作人 */}
-                        <div className="flex items-center gap-2">
-                          <span className={cn("flex-1 text-[12.5px] font-semibold leading-none", card.titleColor)}>
-                            {rec.status}
-                          </span>
-                          {rec.status !== "领取任务" && (
-                            <span className={cn(
-                              "inline-flex items-center rounded-[3px] border px-1.5 py-0.5 text-[10.5px] font-medium leading-none",
-                              stage.color
-                            )}>
-                              {stage.text}
-                            </span>
-                          )}
-                          <span className="text-[11.5px] text-[#6b7280]">{rec.operator}</span>
-                        </div>
-
-                        {/* 第二行：时间 */}
-                        <div className="mt-1.5 text-[11.5px] text-[#9ca3af]">{rec.time}</div>
-
-                        {/* 意见记录区（驳回修改 / 发起成片修改节点） */}
-                        {isOpinionNode && (
-                          <div className="mt-3 flex flex-col gap-2">
-                            {hasOpinionRecords ? (
-                              rec.opinionRecords!.map((op) => {
-                                const hasText = !!op.text.trim()
-                                const hasImages = op.images.length > 0
-                                if (!hasText && !hasImages) return null
-                                return (
-                                  <div
-                                    key={op.id}
-                                    className="rounded-[5px] border border-[#fef08a] bg-[#fffbeb] px-3 py-2.5"
-                                  >
-                                    {hasText && (
-                                      <p className="text-[12px] leading-relaxed text-[#78350f] whitespace-pre-wrap">
-                                        {op.text}
-                                      </p>
-                                    )}
-                                    {hasImages && (
-                                      <div className={cn("flex flex-wrap gap-1.5", hasText ? "mt-2" : "")}>
-                                        {op.images.map((img, imgIdx) => (
-                                          <div
-                                            key={img.id}
-                                            className="group relative h-14 w-14 shrink-0 cursor-pointer overflow-hidden rounded-[4px] border border-[#fde68a] bg-white"
-                                            onClick={() => setPreviewGallery({ images: op.images.map((m) => m.dataUrl), index: imgIdx })}
-                                          >
-                                            <img src={img.dataUrl} alt={img.name} className="h-full w-full object-cover" />
-                                            <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity">
-                                              <ZoomIn size={12} className="text-white" />
-                                            </div>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
-                                )
-                              })
-                            ) : rec.remark ? (
-                              /* 兼容旧格式：只有 remark 没有 opinionRecords */
-                              <div className="rounded-[4px] border border-[#fef08a] bg-[#fefce8] px-2.5 py-1.5 text-[12px] leading-relaxed text-[#78350f]">
-                                {rec.remark}
-                              </div>
-                            ) : null}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )
-                })}
-            </div>
-          )}
+          <AuditRecordTimeline
+            records={auditRecords}
+            taskType={row.taskType}
+            loading={logsLoading}
+            resolveImageSrc={assetUrl}
+          />
         </div>
 
-        {/* 底部固定操作栏 */}
         <div className="shrink-0 border-t border-[#e5e7eb] px-5 py-3">
           <button
             onClick={onClose}
@@ -716,9 +514,6 @@ function AuditRecordDrawer({ row, onClose }: { row: MyTaskRow; onClose: () => vo
           </button>
         </div>
       </div>
-
-      {/* 图片画廊预览 */}
-      {previewGallery && <ImageGalleryModal images={previewGallery.images} initialIndex={previewGallery.index} onClose={() => setPreviewGallery(null)} zIndex={130} />}
     </>
   )
 }
@@ -900,6 +695,7 @@ function useEpisodeVideoGroup(episodeCount: number) {
 
   useEffect(() => {
     setVideos((prev) => {
+      if (prev.length === episodeCount) return prev
       const next: (UploadFileState | null)[] = Array(episodeCount).fill(null)
       for (let i = 0; i < Math.min(prev.length, episodeCount); i++) next[i] = prev[i]
       return next
@@ -978,14 +774,14 @@ function UploadDrawer({
   const [errEpisodeName, setErrEpisodeName] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  // ── 剧集名称（终版 / 修改版，优先使用审核员修改的名称） ──
+  // ── 剧集名称（分集 / 返修版，优先使用审核员修改的名称） ──
   const [episodeName, setEpisodeName] = useState<string>(row.reviewEpisodeName || row.scriptName)
 
-  // ── 初版 state ──
+  // ── 全集 state ──
   const [draftVideoState, setDraftVideoState] = useState<UploadFileState | null>(null)
   const [remoteDraftVideo, setRemoteDraftVideo] = useState<RemoteFileState | null>(null)
 
-  // ── 终版 / 修改版 state ──
+  // ── 分集 / 返修版 state ──
   const [coverStates, setCoverStates] = useState<UploadFileState[]>([])
   const [remoteCoverStates, setRemoteCoverStates] = useState<RemoteFileState[]>([])
   const [copyrightStates, setCopyrightStates] = useState<UploadFileState[]>([])
@@ -1001,7 +797,7 @@ function UploadDrawer({
 
   // ── Load saved draft on mount ──
   useEffect(() => {
-    const deliveryType = uploadType === "上传初版" ? "初版" : uploadType === "上传终版" ? "终版" : "修改版"
+    const deliveryType = uploadType === "上传全集" ? "全集" : uploadType === "上传分集" ? "分集" : "返修版"
     productionTaskApi.listDeliveries(row.id, deliveryType).then((deliveries: any[]) => {
       if (!deliveries || deliveries.length === 0) {
         initialLoadDone.current = true
@@ -1010,8 +806,8 @@ function UploadDrawer({
       const d = deliveries[0]
       if (d.episodeName && !row.reviewEpisodeName) setEpisodeName(d.episodeName)
       const files: any[] = d.files ?? []
-      if (uploadType === "上传初版") {
-        const draft = files.find((f: any) => f.fileType === "初版视频")
+      if (uploadType === "上传全集") {
+        const draft = files.find((f: any) => f.fileType === "全集视频")
         if (draft) setRemoteDraftVideo({ remoteUrl: draft.fileUrl, fileName: draft.fileName, fileSize: draft.fileSize })
       } else {
         const covers = files.filter((f: any) => f.fileType === "封面图")
@@ -1044,15 +840,21 @@ function UploadDrawer({
   }, [])
 
   // ── 字段补齐后自动清除对应错误 ──
-  useEffect(() => { if (draftVideoState) setErrDraft(null) }, [draftVideoState])
-  useEffect(() => { if (coverStates.length > 0 || remoteCoverStates.length > 0) setErrCover(null) }, [coverStates, remoteCoverStates])
+  const errDraftRef = useRef(errDraft)
+  errDraftRef.current = errDraft
+  const errCoverRef = useRef(errCover)
+  errCoverRef.current = errCover
+  const errCopyrightRef = useRef(errCopyright)
+  errCopyrightRef.current = errCopyright
+  useEffect(() => { if (draftVideoState && errDraftRef.current) setErrDraft(null) }, [draftVideoState])
+  useEffect(() => { if ((coverStates.length > 0 || remoteCoverStates.length > 0) && errCoverRef.current) setErrCover(null) }, [coverStates, remoteCoverStates])
   useEffect(() => {
     if (errSubtitled && subtitled.videos.every((v) => v !== null)) setErrSubtitled(null)
   }, [subtitled.videos, errSubtitled])
   useEffect(() => {
     if (errUnsubtitled && unsubtitled.videos.every((v) => v !== null)) setErrUnsubtitled(null)
   }, [unsubtitled.videos, errUnsubtitled])
-  useEffect(() => { if (copyrightStates.length > 0) setErrCopyright(null) }, [copyrightStates])
+  useEffect(() => { if (copyrightStates.length > 0 && errCopyrightRef.current) setErrCopyright(null) }, [copyrightStates])
 
   // ── Scroll refs ──
   const scrollBodyRef = useRef<HTMLDivElement>(null)
@@ -1147,11 +949,11 @@ function UploadDrawer({
 
   function collectAllFiles(): FileEntry[] {
     const files: FileEntry[] = []
-    if (uploadType === "上传初版") {
+    if (uploadType === "上传全集") {
       if (draftVideoState?.remoteUrl) {
-        files.push({ fileType: "初版视频", episodeNum: 0, fileUrl: draftVideoState.remoteUrl, fileName: draftVideoState.file.name, fileSize: draftVideoState.file.size })
+        files.push({ fileType: "全集视频", episodeNum: 0, fileUrl: draftVideoState.remoteUrl, fileName: draftVideoState.file.name, fileSize: draftVideoState.file.size })
       } else if (remoteDraftVideo) {
-        files.push({ fileType: "初版视频", episodeNum: 0, fileUrl: remoteDraftVideo.remoteUrl, fileName: remoteDraftVideo.fileName, fileSize: remoteDraftVideo.fileSize })
+        files.push({ fileType: "全集视频", episodeNum: 0, fileUrl: remoteDraftVideo.remoteUrl, fileName: remoteDraftVideo.fileName, fileSize: remoteDraftVideo.fileSize })
       }
     } else {
       coverStates.forEach((c) => { if (c.remoteUrl) files.push({ fileType: "封面图", episodeNum: 0, fileUrl: c.remoteUrl, fileName: c.file.name, fileSize: c.file.size }) })
@@ -1174,16 +976,16 @@ function UploadDrawer({
     return files
   }
 
-  function buildDeliveryBody(): Record<string, unknown> | null {
+  function buildDeliveryBody(allowEmpty = false): Record<string, unknown> | null {
     const files = collectAllFiles()
-    if (uploadType === "上传初版") {
-      if (files.length === 0) return null
-      return { deliveryType: "初版", episodeName: "", coverUrl: "", files }
+    if (uploadType === "上传全集") {
+      if (files.length === 0 && !allowEmpty) return null
+      return { deliveryType: "全集", episodeName: "", coverUrl: "", files }
     }
-    if (files.length === 0 && !episodeName.trim()) return null
+    if (files.length === 0 && !episodeName.trim() && !allowEmpty) return null
     const coverUrl = coverStates[0]?.remoteUrl ?? remoteCoverStates[0]?.remoteUrl ?? ""
     return {
-      deliveryType: uploadType === "上传终版" ? "终版" : "修改版",
+      deliveryType: uploadType === "上传分集" ? "分集" : "返修版",
       episodeName: episodeName.trim(),
       coverUrl,
       files,
@@ -1197,7 +999,7 @@ function UploadDrawer({
     if (!initialLoadDone.current) return
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current)
     autoSaveTimer.current = setTimeout(() => {
-      const body = buildDeliveryBody()
+      const body = buildDeliveryBody(true)
       if (!body) return
       productionTaskApi.saveDeliveryDraft(row.id, body).catch(() => {})
     }, 1000)
@@ -1208,7 +1010,7 @@ function UploadDrawer({
   async function handleCancel() {
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current)
     try {
-      const body = buildDeliveryBody()
+      const body = buildDeliveryBody(true)
       if (body) await productionTaskApi.saveDeliveryDraft(row.id, body)
     } catch { /* ignore */ }
     onClose()
@@ -1220,9 +1022,9 @@ function UploadDrawer({
     const hasCover = coverStates.some((c) => c.remoteUrl) || remoteCoverStates.length > 0
     const hasCopyright = copyrightStates.some((c) => c.remoteUrl) || remoteCopyrightStates.length > 0
 
-    if (uploadType === "上传初版") {
+    if (uploadType === "上传全集") {
       if (!hasDraftVideo) {
-        setErrDraft("请上传初版视频")
+        setErrDraft("请上传全集视频")
         scrollToRef(draftRef)
         return
       }
@@ -1303,7 +1105,7 @@ function UploadDrawer({
     }
   }
 
-  const isDraftUpload = uploadType === "上传初版"
+  const isDraftUpload = uploadType === "上传全集"
 
   // ── Section header helper ──
   function SectionHeader({ title, required = false }: { title: string; required?: boolean }) {
@@ -1373,7 +1175,7 @@ function UploadDrawer({
               </div>
             </div>
 
-            {/* ── 上传初版：单视频 ── */}
+            {/* ── 上传全集：单视频 ── */}
             {isDraftUpload && (
               <div ref={draftRef} className="flex flex-col gap-3">
                 <SectionHeader title="上传附件" required />
@@ -1393,7 +1195,7 @@ function UploadDrawer({
               </div>
             )}
 
-            {/* ── 上传终版 / 修改版 ── */}
+            {/* ── 上传分集 / 返修版 ── */}
             {!isDraftUpload && (
               <>
                 {/* 剧集名称 */}
@@ -1553,8 +1355,6 @@ function UploadDrawer({
 
 // ─── Main Component ──────────────────────────────────────────────────────────
 
-const myTaskMock: MyTaskRow[] = []
-
 export default function MyTask() {
   const [data, setData] = useState<MyTaskRow[]>([])
   const [total, setTotal] = useState(0)
@@ -1564,7 +1364,7 @@ export default function MyTask() {
 
   const [auditDrawerRow, setAuditDrawerRow] = useState<MyTaskRow | null>(null)
   const [uploadDrawerRow, setUploadDrawerRow] = useState<MyTaskRow | null>(null)
-  const [uploadType, setUploadType] = useState<UploadType>("上传初版")
+  const [uploadType, setUploadType] = useState<UploadType>("上传全集")
   const [detailRow, setDetailRow] = useState<MyTaskRow | null>(null)
   const [querySeq, setQuerySeq] = useState(0)
 
@@ -1625,9 +1425,9 @@ export default function MyTask() {
   }
 
   const uploadToastLabel: Record<UploadType, string> = {
-    "上传初版": "已提交初版审核",
-    "上传终版": "已提交终版审核",
-    "上传修改版": "已提交修改版审核",
+    "上传全集": "已提交全集审核",
+    "上传分集": "已提交分集审核",
+    "上传返修版": "已提交返修版审核",
   }
 
   function handleDeliverySuccess() {
@@ -1656,9 +1456,9 @@ export default function MyTask() {
 
   // Determine which upload button to show per new taskType + taskProgress model
   function getUploadButton(row: MyTaskRow): UploadType | null {
-    if (row.taskType === "制作" && row.taskProgress === "初版制作中") return "上传初版"
-    if (row.taskType === "制作" && row.taskProgress === "终版制作中") return "上传终版"
-    if (row.taskType === "修改" && row.taskProgress === "修改版制作中") return "上传修改版"
+    if (row.taskType === "制作" && row.taskProgress === "全集制作中") return "上传全集"
+    if (row.taskType === "制作" && row.taskProgress === "分集制作中") return "上传分集"
+    if (row.taskType === "修改" && row.taskProgress === "返修版制作中") return "上传返修版"
     return null
   }
 
@@ -1766,11 +1566,11 @@ export default function MyTask() {
                 data.map((row, i) => {
                   const uploadBtn = getUploadButton(row)
                   const canUpload =
-                    uploadBtn === "上传初版"
+                    uploadBtn === "上传全集"
                       ? canUpload1
-                      : uploadBtn === "上传终版"
+                      : uploadBtn === "上传分集"
                         ? canUpload2
-                        : uploadBtn === "上传修改版"
+                        : uploadBtn === "上传返修版"
                           ? canUpload3
                           : false
                   return (

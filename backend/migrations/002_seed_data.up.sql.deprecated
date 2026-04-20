@@ -1,6 +1,19 @@
 -- ============================================================
 -- 002_seed_data.sql  —  Complete business data seed
 -- ============================================================
+--
+-- ⚠️ DEPRECATED / DO NOT RUN ⚠️
+--
+-- This seed file was authored against an earlier data model and no longer
+-- matches the current schema (e.g. ReviewTask is now 1:1 with ProductionTask,
+-- status enums were renamed, and column types have changed). Running it will
+-- either fail or produce inconsistent state.
+--
+-- For local bootstrap, use 001_init.sql (admin + role + permissions) plus
+-- the runtime flows (create accounts via /api/auth/register, claim tasks in
+-- the UI, etc.). A refreshed seed generator is TODO; until then, treat this
+-- file as historical reference only.
+-- ============================================================
 SET NAMES utf8mb4;
 
 -- ─── Users ──────────────────────────────────────────────────

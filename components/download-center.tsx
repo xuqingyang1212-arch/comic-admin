@@ -52,8 +52,6 @@ const statusOptions: { label: string; value: string }[] = [
 
 const formatTaskCreatedAt = formatDateTime
 
-const downloadMock: DownloadTask[] = []
-
 // ─────────────── Main Component ───────────────
 export default function DownloadCenter() {
   const { draft: draftFilters, active: activeFilters, update: updateDraft, apply: applyFilters, reset: resetFilters } = useFilters(defaultFilters)

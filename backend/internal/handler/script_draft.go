@@ -10,6 +10,7 @@ import (
 	"comic-admin/internal/pkg/response"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func ListScriptDrafts(c *gin.Context) {
@@ -122,8 +123,7 @@ type ScriptDraftReq struct {
 
 func CreateScriptDraft(c *gin.Context) {
 	var req ScriptDraftReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.FailBadRequest(c, "剧本名称必填")
+	if !BindOrFail(c, &req) {
 		return
 	}
 
@@ -163,8 +163,7 @@ func UpdateScriptDraft(c *gin.Context) {
 	}
 
 	var req ScriptDraftReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.FailBadRequest(c, "参数错误")
+	if !BindOrFail(c, &req) {
 		return
 	}
 
@@ -201,18 +200,31 @@ func SubmitScriptDraft(c *gin.Context) {
 	if draft.ReviewerID != nil && *draft.ReviewerID > 0 {
 		newStatus = consts.DraftStatusAuditing
 	}
-	res := model.DB.Model(&draft).Where("audit_status IN ?", []string{consts.DraftStatusDraft, consts.DraftStatusRejected}).Update("audit_status", newStatus)
-	if res.RowsAffected == 0 {
-		response.Fail(c, 400, "该剧本已被提交，请勿重复操作")
+
+	userID := middleware.GetUserID(c)
+	txErr := model.DB.Transaction(func(tx *gorm.DB) error {
+		res := tx.Model(&draft).Where("audit_status IN ?", []string{consts.DraftStatusDraft, consts.DraftStatusRejected}).Update("audit_status", newStatus)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return errConflict
+		}
+		return tx.Create(&model.ScriptAuditLog{
+			ScriptDraftID: id,
+			Action:        consts.ActionSubmitReview,
+			OperatorID:    userID,
+			CreatedAt:     time.Now(),
+		}).Error
+	})
+	if txErr != nil {
+		if txErr == errConflict {
+			response.Fail(c, 400, "该剧本已被提交，请勿重复操作")
+			return
+		}
+		response.Fail(c, 500, "提交失败，请重试")
 		return
 	}
-
-	model.DB.Create(&model.ScriptAuditLog{
-		ScriptDraftID: id,
-		Action:        "提交审核",
-		OperatorID:    middleware.GetUserID(c),
-		CreatedAt:     time.Now(),
-	})
 
 	response.OKMsg(c, "提交成功")
 }

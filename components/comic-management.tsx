@@ -233,7 +233,7 @@ function VideoListPanel({
 }: {
   episodes: EpisodeData[]
   type: "subtitled" | "raw"
-  scrollContainerRef: React.RefObject<HTMLDivElement>
+  scrollContainerRef: React.RefObject<HTMLDivElement | null>
 }) {
   const [playingIdx, setPlayingIdx] = useState(-1)
 
@@ -1076,8 +1076,6 @@ function EditDrawer({ row, onClose }: { row: ComicRow; onClose: () => void }) {
 
 
 const PAGE_SIZE_OPTIONS: PageSizeOption[] = [10, 20, 50]
-
-const comicMock: ComicRow[] = []
 
 export default function ComicManagement() {
   // 筛选表单（草稿态）

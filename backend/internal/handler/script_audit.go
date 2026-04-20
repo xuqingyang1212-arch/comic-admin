@@ -12,6 +12,7 @@ import (
 	"comic-admin/internal/pkg/response"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func ListScriptAuditHall(c *gin.Context) {
@@ -69,21 +70,33 @@ func ClaimScriptAudit(c *gin.Context) {
 	}
 
 	userID := middleware.GetUserID(c)
-	res := model.DB.Model(&draft).Where("audit_status = ?", consts.DraftStatusPending).Updates(map[string]any{
-		"audit_status": consts.DraftStatusAuditing,
-		"reviewer_id":  userID,
+
+	txErr := model.DB.Transaction(func(tx *gorm.DB) error {
+		res := tx.Model(&draft).Where("audit_status = ?", consts.DraftStatusPending).Updates(map[string]any{
+			"audit_status": consts.DraftStatusAuditing,
+			"reviewer_id":  userID,
+		})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return errConflict
+		}
+		return tx.Create(&model.ScriptAuditLog{
+			ScriptDraftID: id,
+			Action:        consts.ActionClaimTask,
+			OperatorID:    userID,
+			CreatedAt:     time.Now(),
+		}).Error
 	})
-	if res.RowsAffected == 0 {
-		response.Fail(c, 400, "该任务已被领取")
+	if txErr != nil {
+		if txErr == errConflict {
+			response.Fail(c, 400, "该任务已被领取")
+			return
+		}
+		response.Fail(c, 500, "领取失败，请重试")
 		return
 	}
-
-	model.DB.Create(&model.ScriptAuditLog{
-		ScriptDraftID: id,
-		Action:        consts.ActionClaimTask,
-		OperatorID:    userID,
-		CreatedAt:     time.Now(),
-	})
 
 	response.OKMsg(c, "领取成功")
 }
@@ -100,8 +113,7 @@ func ReviewScriptAudit(c *gin.Context) {
 		return
 	}
 	var req ScriptReviewReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.FailBadRequest(c, "参数错误")
+	if !BindOrFail(c, &req) {
 		return
 	}
 
@@ -123,7 +135,7 @@ func ReviewScriptAudit(c *gin.Context) {
 		}
 	}
 
-	if req.Result == "审核通过" {
+	if req.Result == consts.ReviewStatusApproved {
 		if req.PayEpisode == "" {
 			response.Fail(c, 400, "审核通过时付费卡点必填")
 			return
@@ -138,50 +150,66 @@ func ReviewScriptAudit(c *gin.Context) {
 
 	userID := middleware.GetUserID(c)
 
-	// Atomic CAS: only update if status is still auditing, prevents double-submit
-	res := model.DB.Model(&draft).Where("audit_status = ?", consts.DraftStatusAuditing).Updates(map[string]any{
-		"audit_status":  req.Result,
-		"audit_opinion": req.Opinion,
-	})
-	if res.RowsAffected == 0 {
-		response.Fail(c, 400, "该任务已被处理，请勿重复操作")
-		return
-	}
-
-	model.DB.Create(&model.ScriptAuditLog{
-		ScriptDraftID: id,
-		Action:        req.Result,
-		OperatorID:    userID,
-		Opinion:       req.Opinion,
-		CreatedAt:     time.Now(),
-	})
-
-	if req.Result == "审核通过" {
-		// Re-read draft to pick up any content/divider edits made during audit
-		model.DB.First(&draft, id)
-
-		script := model.Script{
-			ScriptID:          idgen.NextID(),
-			ScriptName:        draft.ScriptName,
-			Content:           draft.Content,
-			EpisodeCount:      draft.EpisodeCount,
-			PayEpisode:        req.PayEpisode,
-			PayBreakpointData: draft.PayBreakpointData,
-			BookID:            draft.BookID,
-			ScriptType:        draft.ScriptType,
-			OriginalScriptID:  draft.OriginalScriptID,
-			WriterID:          draft.WriterID,
-			ReviewerID:        draft.ReviewerID,
-			CreatedAt:         time.Now(),
+	var newScript model.Script
+	txErr := model.DB.Transaction(func(tx *gorm.DB) error {
+		// Atomic CAS: only update if status is still auditing, prevents double-submit
+		res := tx.Model(&draft).Where("audit_status = ?", consts.DraftStatusAuditing).Updates(map[string]any{
+			"audit_status":  req.Result,
+			"audit_opinion": req.Opinion,
+		})
+		if res.Error != nil {
+			return res.Error
 		}
-		if err := model.DB.Create(&script).Error; err != nil {
-			response.FailServer(c, "剧本入库失败: "+err.Error())
+		if res.RowsAffected == 0 {
+			return errConflict
+		}
+
+		if err := tx.Create(&model.ScriptAuditLog{
+			ScriptDraftID: id,
+			Action:        req.Result,
+			OperatorID:    userID,
+			Opinion:       req.Opinion,
+			CreatedAt:     time.Now(),
+		}).Error; err != nil {
+			return err
+		}
+
+		if req.Result == consts.ReviewStatusApproved {
+			// Re-read draft to pick up any content/divider edits made during audit
+			if err := tx.First(&draft, id).Error; err != nil {
+				return err
+			}
+			newScript = model.Script{
+				ScriptID:          idgen.NextID(),
+				ScriptName:        draft.ScriptName,
+				Content:           draft.Content,
+				EpisodeCount:      draft.EpisodeCount,
+				PayEpisode:        req.PayEpisode,
+				PayBreakpointData: draft.PayBreakpointData,
+				BookID:            draft.BookID,
+				ScriptType:        draft.ScriptType,
+				OriginalScriptID:  draft.OriginalScriptID,
+				WriterID:          draft.WriterID,
+				ReviewerID:        draft.ReviewerID,
+				CreatedAt:         time.Now(),
+			}
+			return tx.Create(&newScript).Error
+		}
+		return nil
+	})
+	if txErr != nil {
+		if txErr == errConflict {
+			response.Fail(c, 400, "该任务已被处理，请勿重复操作")
 			return
 		}
-		response.OK(c, gin.H{"scriptId": script.ID, "displayScriptId": script.ScriptID})
+		response.FailServer(c, "审核失败，请重试")
 		return
 	}
 
+	if req.Result == consts.ReviewStatusApproved {
+		response.OK(c, gin.H{"scriptId": newScript.ID, "displayScriptId": newScript.ScriptID})
+		return
+	}
 	response.OKMsg(c, "审核完成")
 }
 
@@ -197,8 +225,7 @@ func SaveScriptAuditDraft(c *gin.Context) {
 		PayBreakpointData *string `json:"payBreakpointData"`
 		EpisodeCount      *int    `json:"episodeCount"`
 	}
-	if err := c.ShouldBindJSON(&body); err != nil {
-		response.FailBadRequest(c, "参数错误")
+	if !BindOrFail(c, &body) {
 		return
 	}
 

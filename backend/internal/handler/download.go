@@ -161,7 +161,7 @@ func buildZip(zipPath, folderName string, comic *model.Comic, content string) er
 	var entries []fileEntry
 
 	switch content {
-	case "有字幕视频":
+	case consts.DownloadContentWithSubtitle:
 		for _, ep := range comic.Episodes {
 			if ep.SubtitledURL == "" {
 				continue
@@ -172,7 +172,7 @@ func buildZip(zipPath, folderName string, comic *model.Comic, content string) er
 				path: localPathFromURL(ep.SubtitledURL),
 			})
 		}
-	case "无字幕视频":
+	case consts.DownloadContentNoSubtitle:
 		for _, ep := range comic.Episodes {
 			if ep.RawURL == "" {
 				continue
@@ -183,11 +183,11 @@ func buildZip(zipPath, folderName string, comic *model.Comic, content string) er
 				path: localPathFromURL(ep.RawURL),
 			})
 		}
-	case "提审材料":
+	case consts.DownloadContentReview:
 		if comic.CoverURL != "" {
 			ext := extFromURL(comic.CoverURL)
 			entries = append(entries, fileEntry{
-				name: "封面图" + ext,
+				name: consts.FileTypeCover + ext,
 				path: localPathFromURL(comic.CoverURL),
 			})
 		}
@@ -197,7 +197,7 @@ func buildZip(zipPath, folderName string, comic *model.Comic, content string) er
 				continue
 			}
 			ext := extFromURL(img)
-			base := "版权证明"
+			base := consts.FileTypeCopyright
 			copyrightCount[base]++
 			n := copyrightCount[base]
 			name := base

@@ -16,6 +16,7 @@ export const MENU_PERMISSION_MAP: Record<string, string[]> = {
   // 系统设置
   userMgr: ["system.user.list"],
   roleMgr: ["system.role.list"],
+  registerReview: ["system.registerReview.list"],
 }
 
 // Parent menu key -> child keys (if ANY child is visible, parent is visible)
@@ -23,7 +24,7 @@ export const PARENT_MENU_CHILDREN: Record<string, string[]> = {
   resource: ["book", "script", "comic", "downloadCenter"],
   production: ["taskHall", "myTask"],
   review: ["scriptReview", "draftReview"],
-  system: ["userMgr", "roleMgr"],
+  system: ["userMgr", "roleMgr", "registerReview"],
 }
 
 export function hasPermission(userPerms: string[], required: string | string[]): boolean {
@@ -47,7 +48,7 @@ export function getFirstAllowedKey(userPerms: string[]): string | null {
     "scriptCreate",
     "taskHall", "myTask",
     "scriptReview", "draftReview",
-    "userMgr", "roleMgr",
+    "userMgr", "roleMgr", "registerReview",
   ]
   return order.find((k) => isMenuVisible(k, userPerms)) ?? null
 }
