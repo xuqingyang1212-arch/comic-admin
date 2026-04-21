@@ -22,6 +22,17 @@ func ListComicReviewTasks(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	scope := c.Query("scope")
 
+	// 按 scope 分派权限：待我审核(mine) / 我参与的(participated)
+	if scope == "participated" {
+		if !middleware.EnsurePerm(c, "review.comic.join_list") {
+			return
+		}
+	} else {
+		if !middleware.EnsurePerm(c, "review.comic.my_list") {
+			return
+		}
+	}
+
 	db := model.DB.Model(&model.ReviewTask{})
 
 	if scope == "participated" {

@@ -108,7 +108,6 @@ func GetPermissionTree(c *gin.Context) {
 				{"key": "resource.book.list", "label": "列表数据"},
 				{"key": "resource.book.script", "label": "创作剧本"},
 				{"key": "resource.book.detail", "label": "书籍详情"},
-				{"key": "resource.book.detail_script", "label": "书籍详情-创作剧本"},
 			}},
 			{"key": "resource.script", "label": "剧本管理", "children": []map[string]any{
 				{"key": "resource.script.list", "label": "列表数据"},
@@ -122,9 +121,15 @@ func GetPermissionTree(c *gin.Context) {
 				{"key": "resource.comic.download", "label": "下载"},
 				{"key": "resource.comic.revise", "label": "发起修改"},
 			}},
+			{"key": "resource.downloadCenter", "label": "下载中心", "children": []map[string]any{
+				{"key": "resource.downloadCenter.list", "label": "列表数据"},
+				{"key": "resource.downloadCenter.download", "label": "下载"},
+				{"key": "resource.downloadCenter.retry", "label": "重试"},
+			}},
 		}},
 		{"key": "scriptCreate", "label": "剧本创作", "children": []map[string]any{
 			{"key": "scriptCreate.list", "label": "列表数据"},
+			{"key": "scriptCreate.detail", "label": "剧本详情"},
 			{"key": "scriptCreate.edit", "label": "编辑"},
 			{"key": "scriptCreate.delete", "label": "删除"},
 			{"key": "scriptCreate.log", "label": "审核记录"},
@@ -158,26 +163,30 @@ func GetPermissionTree(c *gin.Context) {
 				{"key": "review.script.my_log", "label": "我的审核-审核记录"},
 			}},
 			{"key": "review.comic", "label": "漫剧审核", "children": []map[string]any{
-				{"key": "review.comic.list", "label": "列表数据"},
-				{"key": "review.comic.detail", "label": "任务详情"},
-				{"key": "review.comic.review", "label": "审核"},
-				{"key": "review.comic.log", "label": "审核记录"},
+				{"key": "review.comic.my_list", "label": "待我审核-列表数据"},
+				{"key": "review.comic.my_detail", "label": "待我审核-任务详情"},
+				{"key": "review.comic.my_review", "label": "待我审核-审核"},
+				{"key": "review.comic.my_log", "label": "待我审核-审核记录"},
+				{"key": "review.comic.join_list", "label": "我参与的-列表数据"},
+				{"key": "review.comic.join_detail", "label": "我参与的-任务详情"},
+				{"key": "review.comic.join_log", "label": "我参与的-审核记录"},
 			}},
 		}},
 		{"key": "system", "label": "系统设置", "children": []map[string]any{
 			{"key": "system.user", "label": "用户管理", "children": []map[string]any{
 				{"key": "system.user.list", "label": "列表数据"},
-				{"key": "system.user.add", "label": "新增"},
 				{"key": "system.user.edit", "label": "编辑"},
 			}},
 			{"key": "system.role", "label": "角色管理", "children": []map[string]any{
 				{"key": "system.role.list", "label": "列表数据"},
 				{"key": "system.role.add", "label": "新增"},
 				{"key": "system.role.edit", "label": "编辑"},
+				{"key": "system.role.invite", "label": "复制邀请链接"},
 			}},
 			{"key": "system.registerReview", "label": "注册审核", "children": []map[string]any{
 				{"key": "system.registerReview.list", "label": "列表数据"},
-				{"key": "system.registerReview.review", "label": "审核"},
+				{"key": "system.registerReview.approve", "label": "通过"},
+				{"key": "system.registerReview.reject", "label": "不通过"},
 			}},
 		}},
 	}

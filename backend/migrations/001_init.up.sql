@@ -24,7 +24,6 @@ CROSS JOIN (
   SELECT 'resource.book.list' AS key_name UNION ALL
   SELECT 'resource.book.script' UNION ALL
   SELECT 'resource.book.detail' UNION ALL
-  SELECT 'resource.book.detail_script' UNION ALL
   SELECT 'resource.script.list' UNION ALL
   SELECT 'resource.script.detail' UNION ALL
   SELECT 'resource.script.publish' UNION ALL
@@ -33,9 +32,14 @@ CROSS JOIN (
   SELECT 'resource.comic.detail' UNION ALL
   SELECT 'resource.comic.download' UNION ALL
   SELECT 'resource.comic.revise' UNION ALL
+  SELECT 'resource.downloadCenter.list' UNION ALL
+  SELECT 'resource.downloadCenter.download' UNION ALL
+  SELECT 'resource.downloadCenter.retry' UNION ALL
   SELECT 'scriptCreate.list' UNION ALL
+  SELECT 'scriptCreate.detail' UNION ALL
   SELECT 'scriptCreate.edit' UNION ALL
-  SELECT 'scriptCreate.delLog' UNION ALL
+  SELECT 'scriptCreate.delete' UNION ALL
+  SELECT 'scriptCreate.log' UNION ALL
   SELECT 'comicMake.hall.list' UNION ALL
   SELECT 'comicMake.hall.detail' UNION ALL
   SELECT 'comicMake.hall.take' UNION ALL
@@ -55,16 +59,22 @@ CROSS JOIN (
   SELECT 'review.script.my_detail' UNION ALL
   SELECT 'review.script.my_review' UNION ALL
   SELECT 'review.script.my_log' UNION ALL
-  SELECT 'review.comic.list' UNION ALL
-  SELECT 'review.comic.detail' UNION ALL
-  SELECT 'review.comic.review' UNION ALL
-  SELECT 'review.comic.log' UNION ALL
+  SELECT 'review.comic.my_list' UNION ALL
+  SELECT 'review.comic.my_detail' UNION ALL
+  SELECT 'review.comic.my_review' UNION ALL
+  SELECT 'review.comic.my_log' UNION ALL
+  SELECT 'review.comic.join_list' UNION ALL
+  SELECT 'review.comic.join_detail' UNION ALL
+  SELECT 'review.comic.join_log' UNION ALL
   SELECT 'system.user.list' UNION ALL
-  SELECT 'system.user.add' UNION ALL
   SELECT 'system.user.edit' UNION ALL
   SELECT 'system.role.list' UNION ALL
   SELECT 'system.role.add' UNION ALL
-  SELECT 'system.role.edit'
+  SELECT 'system.role.edit' UNION ALL
+  SELECT 'system.role.invite' UNION ALL
+  SELECT 'system.registerReview.list' UNION ALL
+  SELECT 'system.registerReview.approve' UNION ALL
+  SELECT 'system.registerReview.reject'
 ) p
 WHERE r.name = '超级管理员'
 ON DUPLICATE KEY UPDATE permission_key = permission_key;

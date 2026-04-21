@@ -407,6 +407,7 @@ export default function ScriptCreation() {
   const [workbenchDetail, setWorkbenchDetail] = useState<BookDetail | null>(null)
   const [detailRow, setDetailRow] = useState<ScriptRow | null>(null)
 
+  const canDetail = usePerm("scriptCreate.detail")
   const canEdit = usePerm("scriptCreate.edit")
   const canDelete = usePerm("scriptCreate.delete")
   const canLog = usePerm("scriptCreate.log")
@@ -617,12 +618,16 @@ export default function ScriptCreation() {
                 >
                   {/* 剧本名称 */}
                   <td className="px-4 py-3 font-medium whitespace-nowrap">
-                    <button
-                      onClick={() => setDetailRow(row)}
-                      className="text-left text-[#2563eb] hover:text-[#1d4ed8] hover:underline transition-colors"
-                    >
-                      {row.scriptName}
-                    </button>
+                    {canDetail ? (
+                      <button
+                        onClick={() => setDetailRow(row)}
+                        className="text-left text-[#2563eb] hover:text-[#1d4ed8] hover:underline transition-colors"
+                      >
+                        {row.scriptName}
+                      </button>
+                    ) : (
+                      <span className="text-left text-[#111827]">{row.scriptName}</span>
+                    )}
                   </td>
                   {/* 集数 */}
                   <td className="px-4 py-3 text-[#4b5563] whitespace-nowrap">{row.episodeCount}</td>

@@ -56,7 +56,8 @@ export default function RegisterReview() {
   const { page, pageSize, resetPage, paginationProps } = usePagination()
   const [listTick, setListTick] = useState(0)
 
-  const canReview = usePerm("system.registerReview.review")
+  const canApprove = usePerm("system.registerReview.approve")
+  const canReject  = usePerm("system.registerReview.reject")
 
   useEffect(() => {
     roleApi.list({ page: 1, pageSize: 100 })
@@ -171,20 +172,24 @@ export default function RegisterReview() {
                     <StatusBadge status={row.reviewStatus} config={STATUS_MAP} />
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap">
-                    {canReview && row.reviewStatus === "审核中" && (
+                    {row.reviewStatus === "审核中" && (canApprove || canReject) && (
                       <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handleReview(row.id, "approve")}
-                          className="flex h-[26px] items-center rounded-[4px] border border-[#38c08f] bg-white px-2.5 text-[12px] text-[#38c08f] transition-colors hover:bg-[#f0fdf4]"
-                        >
-                          通过
-                        </button>
-                        <button
-                          onClick={() => handleReview(row.id, "reject")}
-                          className="flex h-[26px] items-center rounded-[4px] border border-[#f04438] bg-white px-2.5 text-[12px] text-[#f04438] transition-colors hover:bg-[#fef2f2]"
-                        >
-                          不通过
-                        </button>
+                        {canApprove && (
+                          <button
+                            onClick={() => handleReview(row.id, "approve")}
+                            className="flex h-[26px] items-center rounded-[4px] border border-[#38c08f] bg-white px-2.5 text-[12px] text-[#38c08f] transition-colors hover:bg-[#f0fdf4]"
+                          >
+                            通过
+                          </button>
+                        )}
+                        {canReject && (
+                          <button
+                            onClick={() => handleReview(row.id, "reject")}
+                            className="flex h-[26px] items-center rounded-[4px] border border-[#f04438] bg-white px-2.5 text-[12px] text-[#f04438] transition-colors hover:bg-[#fef2f2]"
+                          >
+                            不通过
+                          </button>
+                        )}
                       </div>
                     )}
                   </td>

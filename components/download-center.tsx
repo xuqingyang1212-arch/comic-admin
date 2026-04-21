@@ -10,6 +10,7 @@ import { FilterInput, SelectFilter, DateRangePicker, StatusBadge } from "@/compo
 import { formatDateTime } from "@/lib/format"
 import { useFilters } from "@/hooks/use-filters"
 import { usePagination } from "@/hooks/use-pagination"
+import { usePerm } from "@/components/admin-layout"
 
 // ─────────────── Types ───────────────
 type DownloadContent = "有字幕视频" | "无字幕视频" | "提审材料"
@@ -59,6 +60,9 @@ export default function DownloadCenter() {
   const [data, setData]                   = useState<DownloadTask[]>([])
   const [total, setTotal]                 = useState(0)
   const [loading, setLoading]             = useState(false)
+
+  const canDownload = usePerm("resource.downloadCenter.download")
+  const canRetry    = usePerm("resource.downloadCenter.retry")
 
   const fetchTasks = useCallback(async () => {
     setLoading(true)
@@ -252,7 +256,7 @@ export default function DownloadCenter() {
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">
                       <div className="flex items-center gap-2">
-                        {row.status === "已完成" && (
+                        {row.status === "已完成" && canDownload && (
                           <button
                             onClick={() => handleDownload(row)}
                             className="flex h-[26px] items-center rounded-[4px] border border-[#d1fae5] bg-[#ecfdf5] px-2.5 text-[12px] font-medium text-[#059669] transition-colors hover:border-[#6ee7b7] hover:bg-[#d1fae5]"
@@ -260,7 +264,7 @@ export default function DownloadCenter() {
                             下载
                           </button>
                         )}
-                        {row.status === "失败" && (
+                        {row.status === "失败" && canRetry && (
                           <button
                             onClick={() => handleRetry(row.id)}
                             className="flex h-[26px] items-center rounded-[4px] border border-[#fee2e2] bg-[#fef2f2] px-2.5 text-[12px] font-medium text-[#dc2626] transition-colors hover:border-[#fca5a5] hover:bg-[#fee2e2]"

@@ -38,6 +38,7 @@ func SetupRouter(mode string) *gin.Engine {
 	})
 
 	perm := middleware.RequirePerm
+	permAny := middleware.RequireAnyPerm
 
 	// Protected routes — session guard enforces single-device login; dedup prevents double-submit
 	auth := api.Group("", middleware.JWTAuth(), middleware.SessionGuard(), middleware.LoadPermissions(model.DB), middleware.PreventDuplicateSubmit(3*time.Second))
@@ -51,7 +52,7 @@ func SetupRouter(mode string) *gin.Engine {
 		auth.GET("/roles", perm("system.role.list"), ListRoles)
 		auth.POST("/roles", perm("system.role.add"), CreateRole)
 		auth.PUT("/roles/:id", perm("system.role.edit"), UpdateRole)
-		auth.GET("/roles/:id/invite-code", perm("system.role.list"), GetRoleInviteCode)
+		auth.GET("/roles/:id/invite-code", perm("system.role.invite"), GetRoleInviteCode)
 		auth.GET("/permissions/tree", GetPermissionTree)
 
 		// --- Books ---
@@ -60,12 +61,12 @@ func SetupRouter(mode string) *gin.Engine {
 
 		// --- Script Drafts (creation) ---
 		auth.GET("/script-drafts", perm("scriptCreate.list"), ListScriptDrafts)
-		auth.GET("/script-drafts/:id", GetScriptDraft)
+		auth.GET("/script-drafts/:id", perm("scriptCreate.detail"), GetScriptDraft)
 		auth.POST("/script-drafts", perm("scriptCreate.edit"), CreateScriptDraft)
 		auth.PUT("/script-drafts/:id", perm("scriptCreate.edit"), UpdateScriptDraft)
 		auth.POST("/script-drafts/:id/submit", perm("scriptCreate.edit"), SubmitScriptDraft)
 		auth.DELETE("/script-drafts/:id", perm("scriptCreate.delete"), DeleteScriptDraft)
-		auth.GET("/script-drafts/:id/audit-logs", ListScriptAuditLogs)
+		auth.GET("/script-drafts/:id/audit-logs", perm("scriptCreate.log"), ListScriptAuditLogs)
 
 		// --- Script Audit ---
 		auth.GET("/script-audit/hall", perm("review.script.hall_list"), ListScriptAuditHall)
@@ -83,20 +84,21 @@ func SetupRouter(mode string) *gin.Engine {
 		// --- Production Tasks ---
 		auth.GET("/production-tasks/hall", perm("comicMake.hall.list"), ListProductionTaskHall)
 		auth.GET("/production-tasks/mine", perm("comicMake.my.list"), ListProductionTaskMine)
-		auth.GET("/production-tasks/:id", GetProductionTask)
+		auth.GET("/production-tasks/:id", permAny("comicMake.hall.detail", "comicMake.my.detail"), GetProductionTask)
 		auth.POST("/production-tasks/:id/claim", perm("comicMake.hall.take"), ClaimProductionTask)
 		auth.POST("/production-tasks/:id/cancel", perm("comicMake.hall.cancel"), CancelProductionTask)
-		auth.GET("/production-tasks/:id/audit-logs", ListProductionAuditLogs)
-		auth.GET("/production-tasks/:id/deliveries", ListDeliveries)
-		auth.POST("/production-tasks/:id/deliveries", SubmitDelivery)
-		auth.PUT("/production-tasks/:id/deliveries/draft", SaveDeliveryDraft)
+		auth.GET("/production-tasks/:id/audit-logs", permAny("comicMake.hall.log", "comicMake.my.log"), ListProductionAuditLogs)
+		auth.GET("/production-tasks/:id/deliveries", permAny("comicMake.my.upload1", "comicMake.my.upload2", "comicMake.my.upload3"), ListDeliveries)
+		auth.POST("/production-tasks/:id/deliveries", permAny("comicMake.my.upload1", "comicMake.my.upload2", "comicMake.my.upload3"), SubmitDelivery)
+		auth.PUT("/production-tasks/:id/deliveries/draft", permAny("comicMake.my.upload1", "comicMake.my.upload2", "comicMake.my.upload3"), SaveDeliveryDraft)
 
 		// --- Comic Review ---
-		auth.GET("/comic-review/tasks", perm("review.comic.list"), ListComicReviewTasks)
-		auth.GET("/comic-review/tasks/:id", perm("review.comic.detail"), GetComicReviewTask)
-		auth.POST("/comic-review/tasks/:id/review", perm("review.comic.review"), ReviewComicTask)
-		auth.PUT("/comic-review/tasks/:id/save", perm("review.comic.review"), SaveComicReviewDraft)
-		auth.GET("/comic-review/tasks/:id/logs", perm("review.comic.log"), ListComicReviewLogs)
+		// `list` dispatches my_list / join_list inside the handler based on ?scope=.
+		auth.GET("/comic-review/tasks", ListComicReviewTasks)
+		auth.GET("/comic-review/tasks/:id", permAny("review.comic.my_detail", "review.comic.join_detail"), GetComicReviewTask)
+		auth.POST("/comic-review/tasks/:id/review", perm("review.comic.my_review"), ReviewComicTask)
+		auth.PUT("/comic-review/tasks/:id/save", perm("review.comic.my_review"), SaveComicReviewDraft)
+		auth.GET("/comic-review/tasks/:id/logs", permAny("review.comic.my_log", "review.comic.join_log"), ListComicReviewLogs)
 
 		// --- Comics ---
 		auth.GET("/comics", perm("resource.comic.list"), ListComics)
@@ -105,13 +107,14 @@ func SetupRouter(mode string) *gin.Engine {
 		auth.POST("/comics/:id/revisions", perm("resource.comic.revise"), CreateRevision)
 
 		// --- Download Center ---
-		auth.GET("/download/tasks", perm("resource.comic.download"), ListDownloadTasks)
-		auth.GET("/download/tasks/:id/url", GetDownloadURL)
-		auth.POST("/download/tasks/:id/retry", RetryDownloadTask)
+		auth.GET("/download/tasks", perm("resource.downloadCenter.list"), ListDownloadTasks)
+		auth.GET("/download/tasks/:id/url", perm("resource.downloadCenter.download"), GetDownloadURL)
+		auth.POST("/download/tasks/:id/retry", perm("resource.downloadCenter.retry"), RetryDownloadTask)
 
 		// --- Register Review ---
 		auth.GET("/register-reviews", perm("system.registerReview.list"), ListRegisterReviews)
-		auth.POST("/register-reviews/:id/review", perm("system.registerReview.review"), ReviewRegistration)
+		// `review` dispatches approve / reject inside the handler based on action.
+		auth.POST("/register-reviews/:id/review", ReviewRegistration)
 
 		// --- Upload ---
 		auth.POST("/upload/presign", GetPresignURL)

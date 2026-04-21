@@ -79,11 +79,13 @@ export default function AdminLayout() {
 
   useEffect(() => {
     const ALL_PERMS = [
-      "resource.book.list", "resource.script.list", "resource.comic.list", "resource.comic.download",
+      "resource.book.list", "resource.script.list", "resource.comic.list",
+      "resource.downloadCenter.list",
       "scriptCreate.list",
       "comicMake.hall.list", "comicMake.my.list",
-      "review.script.hall_list", "review.script.my_list", "review.comic.list",
-      "system.user.list", "system.role.list",
+      "review.script.hall_list", "review.script.my_list",
+      "review.comic.my_list", "review.comic.join_list",
+      "system.user.list", "system.role.list", "system.registerReview.list",
     ]
 
     async function initAuth() {

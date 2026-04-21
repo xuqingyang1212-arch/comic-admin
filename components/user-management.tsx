@@ -48,7 +48,6 @@ interface UserFormErrors {
 }
 
 const defaultFilters: FilterForm = { name: "", email: "", role: "", status: "" }
-const defaultUserForm: UserForm = { name: "", email: "", roles: [], status: "", reviewerId: 0 }
 
 const roleOptionsFallback: { label: string; value: string }[] = []
 
@@ -56,10 +55,6 @@ const statusOptions: { label: string; value: UserStatus }[] = [
   { label: "启用", value: "启用" },
   { label: "禁用", value: "禁用" },
 ]
-
-function isValidEmail(v: string) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)
-}
 
 function mapApiUser(u: Record<string, unknown>): User {
   const rawRoles = u.roles
@@ -227,21 +222,24 @@ function FormSelectSingle({
 }
 
 // ─────────────── UserDrawer ───────────────
+// Editing-only drawer: users are created through the registration-review flow,
+// never directly here.
 function UserDrawer({
-  mode, editingUser, onClose, onSubmit, roleOptions, activeUsers,
+  editingUser, onClose, onSubmit, roleOptions, activeUsers,
 }: {
-  mode: "add" | "edit"
-  editingUser: User | null
+  editingUser: User
   onClose: () => void
   onSubmit: (form: UserForm) => void
   roleOptions: { label: string; value: string }[]
   activeUsers: { id: number; name: string }[]
 }) {
-  const [form, setForm] = useState<UserForm>(() =>
-    mode === "edit" && editingUser
-      ? { name: editingUser.name, email: editingUser.email, roles: editingUser.roles, status: editingUser.status, reviewerId: editingUser.reviewerId }
-      : defaultUserForm
-  )
+  const [form, setForm] = useState<UserForm>(() => ({
+    name: editingUser.name,
+    email: editingUser.email,
+    roles: editingUser.roles,
+    status: editingUser.status,
+    reviewerId: editingUser.reviewerId,
+  }))
   const [errors, setErrors] = useState<UserFormErrors>({})
 
   function setField<K extends keyof UserForm>(key: K, val: UserForm[K]) {
@@ -251,12 +249,6 @@ function UserDrawer({
 
   function validate(): boolean {
     const errs: UserFormErrors = {}
-    if (mode === "add") {
-      if (!form.name.trim()) errs.name = "请输入用户名"
-      if (!form.email.trim()) errs.email = "请输入邮箱"
-      else if (!isValidEmail(form.email.trim())) errs.email = "请输入正确的邮箱格式"
-    }
-    if (mode === "add" && form.roles.length === 0) errs.roles = "请至少选择一个角色"
     if (!form.status) errs.status = "请选择状态"
     setErrors(errs)
     return Object.keys(errs).length === 0
@@ -270,9 +262,7 @@ function UserDrawer({
   return (
     <RightDrawer width={480} zIndex={50} overlayOpacity={0.2} onClose={onClose}>
         <div className="flex shrink-0 items-center justify-between border-b border-[#e5e7eb] px-6 py-4">
-          <span className="text-[15px] font-semibold text-[#111827]">
-            {mode === "add" ? "新增用户" : "编辑用户"}
-          </span>
+          <span className="text-[15px] font-semibold text-[#111827]">编辑用户</span>
           <button onClick={onClose} className="flex h-7 w-7 items-center justify-center rounded-[6px] text-[#9ca3af] transition-colors hover:bg-[#f3f4f6] hover:text-[#374151]">
             <X size={16} />
           </button>
@@ -280,15 +270,15 @@ function UserDrawer({
         <div className="flex-1 overflow-y-auto px-6 py-5">
           <div className="flex flex-col gap-5">
             <FormInput label="用户名" placeholder="请输入用户名" value={form.name}
-              onChange={(v) => setField("name", v)} error={errors.name} required={mode === "add"} readOnly={mode === "edit"} />
+              onChange={(v) => setField("name", v)} error={errors.name} readOnly />
             <FormInput label="邮箱" placeholder="请输入邮箱" value={form.email}
-              onChange={(v) => setField("email", v)} error={errors.email} required={mode === "add"} readOnly={mode === "edit"} />
-            <MultiRoleSelect value={form.roles} onChange={(v) => setField("roles", v)} error={errors.roles} required={mode === "add"} options={roleOptions} />
+              onChange={(v) => setField("email", v)} error={errors.email} readOnly />
+            <MultiRoleSelect value={form.roles} onChange={(v) => setField("roles", v)} error={errors.roles} options={roleOptions} />
             <FormSelectSingle label="状态" value={form.status} onChange={(v) => setField("status", v)}
               options={statusOptions} placeholder="请选择状态" error={errors.status} required />
             <FormSelectSingle label="二审用户" value={form.reviewerId ? String(form.reviewerId) : ""}
               onChange={(v) => setField("reviewerId", Number(v))}
-              options={activeUsers.filter((u) => String(u.id) !== editingUser?.id).map((u) => ({ label: u.name, value: String(u.id) }))}
+              options={activeUsers.filter((u) => String(u.id) !== editingUser.id).map((u) => ({ label: u.name, value: String(u.id) }))}
               placeholder="请选择二审用户（可选）" clearable />
           </div>
         </div>
@@ -316,10 +306,8 @@ export default function UserManagement() {
   const [activeUsers, setActiveUsers] = useState<{ id: number; name: string }[]>([])
   const { draft: draftFilters, active: activeFilters, update: updateDraft, apply: applyFilters, reset: resetFilters } = useFilters(defaultFilters)
   const { page: currentPage, pageSize, resetPage, paginationProps } = usePagination()
-  const [drawerMode, setDrawerMode] = useState<"add" | "edit" | null>(null)
   const [editingUser, setEditingUser] = useState<User | null>(null)
 
-  const canAdd = usePerm("system.user.add")
   const canEdit = usePerm("system.user.edit")
 
   useEffect(() => {
@@ -383,31 +371,24 @@ export default function UserManagement() {
   function handleQuery() { applyFilters(); resetPage() }
   function handleReset() { resetFilters(); resetPage() }
 
-  function openAdd() { setEditingUser(null); setDrawerMode("add") }
-  function openEdit(user: User) { setEditingUser(user); setDrawerMode("edit") }
-  function closeDrawer() { setDrawerMode(null); setEditingUser(null) }
+  function openEdit(user: User) { setEditingUser(user) }
+  function closeDrawer() { setEditingUser(null) }
 
   async function handleSubmit(form: UserForm) {
-    if (drawerMode === "add") {
+    if (!editingUser) return
+    try {
+      const roleIds = form.roles
+        .map((name) => roleIdByName.get(name))
+        .filter((id): id is number => id !== undefined)
+      await userApi.update(Number(editingUser.id), {
+        roleIds,
+        status: form.status,
+        reviewerId: form.reviewerId || 0,
+      })
       closeDrawer()
       await fetchUsers()
-      return
-    }
-    if (drawerMode === "edit" && editingUser) {
-      try {
-        const roleIds = form.roles
-          .map((name) => roleIdByName.get(name))
-          .filter((id): id is number => id !== undefined)
-        await userApi.update(Number(editingUser.id), {
-          roleIds,
-          status: form.status,
-          reviewerId: form.reviewerId || 0,
-        })
-        closeDrawer()
-        await fetchUsers()
-      } catch (e) {
-        console.error(e)
-      }
+    } catch (e) {
+      console.error(e)
     }
   }
 
@@ -416,9 +397,8 @@ export default function UserManagement() {
   return (
     <div className="flex flex-1 flex-col gap-3 min-h-0">
 
-      {drawerMode && (
+      {editingUser && (
         <UserDrawer
-          mode={drawerMode}
           editingUser={editingUser}
           onClose={closeDrawer}
           onSubmit={handleSubmit}

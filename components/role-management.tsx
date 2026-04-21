@@ -292,6 +292,7 @@ export default function RoleManagement() {
 
   const canAdd = usePerm("system.role.add")
   const canEdit = usePerm("system.role.edit")
+  const canInvite = usePerm("system.role.invite")
 
   const fetchRoles = useCallback(async () => {
     setLoading(true)
@@ -475,28 +476,30 @@ export default function RoleManagement() {
                             编辑
                           </button>
                         )}
-                        <button
-                          onClick={async () => {
-                            try {
-                              const res = await roleApi.inviteCode(Number(row.id))
-                              const link = `${window.location.origin}/register?invite=${encodeURIComponent(res.code)}`
-                              const ta = document.createElement("textarea")
-                              ta.value = link
-                              ta.style.position = "fixed"
-                              ta.style.left = "-9999px"
-                              document.body.appendChild(ta)
-                              ta.select()
-                              document.execCommand("copy")
-                              document.body.removeChild(ta)
-                              toast.success("邀请链接已复制到剪贴板")
-                            } catch {
-                              toast.error("获取邀请链接失败")
-                            }
-                          }}
-                          className="flex h-[26px] items-center rounded-[4px] border border-[#38c08f] bg-white px-2.5 text-[12px] text-[#38c08f] transition-colors hover:bg-[#f0fdf4]"
-                        >
-                          复制邀请链接
-                        </button>
+                        {canInvite && (
+                          <button
+                            onClick={async () => {
+                              try {
+                                const res = await roleApi.inviteCode(Number(row.id))
+                                const link = `${window.location.origin}/register?invite=${encodeURIComponent(res.code)}`
+                                const ta = document.createElement("textarea")
+                                ta.value = link
+                                ta.style.position = "fixed"
+                                ta.style.left = "-9999px"
+                                document.body.appendChild(ta)
+                                ta.select()
+                                document.execCommand("copy")
+                                document.body.removeChild(ta)
+                                toast.success("邀请链接已复制到剪贴板")
+                              } catch {
+                                toast.error("获取邀请链接失败")
+                              }
+                            }}
+                            className="flex h-[26px] items-center rounded-[4px] border border-[#38c08f] bg-white px-2.5 text-[12px] text-[#38c08f] transition-colors hover:bg-[#f0fdf4]"
+                          >
+                            复制邀请链接
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

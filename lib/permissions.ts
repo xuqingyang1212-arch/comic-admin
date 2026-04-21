@@ -4,7 +4,7 @@ export const MENU_PERMISSION_MAP: Record<string, string[]> = {
   book: ["resource.book.list"],
   script: ["resource.script.list"],
   comic: ["resource.comic.list"],
-  downloadCenter: ["resource.comic.download"],
+  downloadCenter: ["resource.downloadCenter.list"],
   // 剧本创作
   scriptCreate: ["scriptCreate.list"],
   // 漫剧制作
@@ -12,7 +12,7 @@ export const MENU_PERMISSION_MAP: Record<string, string[]> = {
   myTask: ["comicMake.my.list"],
   // 审核管理
   scriptReview: ["review.script.hall_list", "review.script.my_list"],
-  draftReview: ["review.comic.list"],
+  draftReview: ["review.comic.my_list", "review.comic.join_list"],
   // 系统设置
   userMgr: ["system.user.list"],
   roleMgr: ["system.role.list"],

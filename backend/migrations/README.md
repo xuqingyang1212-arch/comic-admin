@@ -5,6 +5,19 @@
 - **Schema（表结构）**：由 `backend/internal/model/db.go` 中的 `DB.AutoMigrate(...)` 在服务启动时自动维护。
 - **基线数据（Seed）**：`001_init.up.sql` 通过手动执行创建默认超级管理员账户、角色以及全部权限授权。
 - **历史 Seed 文件**：`002_seed_data.up.sql.deprecated` 已失效（对应旧数据模型，不要执行）。
+- **权限树重构（003）**：`003_permission_refactor.up.sql` 负责迁移既有角色的权限，使之对齐新的权限树（下载中心独立、漫剧审核拆"待我审核/我参与的"、注册审核拆"通过/不通过"等）。已经跑过 `001_init` 的库追加执行即可：
+
+  ```bash
+  mysql -u<user> -p<password> comic_admin < migrations/003_permission_refactor.up.sql
+  ```
+
+- **下载中心 namespace（004）**：`004_downloadcenter_namespace.up.sql` 将顶层 `downloadCenter.*` 下沉到 `resource.downloadCenter.*`，与"资源管理 → 下载中心"的菜单层级一致。
+  - 已经跑过 003 的旧库必须追加执行一次；
+  - 从零跑 001 + 003 的新库此文件为 NO-OP，可选执行。
+
+  ```bash
+  mysql -u<user> -p<password> comic_admin < migrations/004_downloadcenter_namespace.up.sql
+  ```
 
 ## 文件命名规则
 

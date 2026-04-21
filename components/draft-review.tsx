@@ -1331,7 +1331,17 @@ const TABLE_HEADERS_PARTICIPATED = ["任务名称", "剧本ID", "集数", "制�
 type ScopeTab = "mine" | "participated"
 
 export default function DraftReview() {
-  const [activeTab, setActiveTab] = useState<ScopeTab>("mine")
+  const canMyList     = usePerm("review.comic.my_list")
+  const canJoinList   = usePerm("review.comic.join_list")
+  const canMyDetail   = usePerm("review.comic.my_detail")
+  const canMyReview   = usePerm("review.comic.my_review")
+  const canMyLog      = usePerm("review.comic.my_log")
+  const canJoinDetail = usePerm("review.comic.join_detail")
+  const canJoinLog    = usePerm("review.comic.join_log")
+
+  // 首个可见的 tab 作为初始值，避免只有 join 权限的用户默认加载 mine 列表而 403
+  const initialTab: ScopeTab = canMyList ? "mine" : "participated"
+  const [activeTab, setActiveTab] = useState<ScopeTab>(initialTab)
   const [data, setData] = useState<DraftReviewRow[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
@@ -1341,11 +1351,17 @@ export default function DraftReview() {
   const [reviewRow, setReviewRow] = useState<DraftReviewRow | null>(null)
   const [recordRow, setRecordRow] = useState<DraftReviewRow | null>(null)
 
-  const canDetail = usePerm("review.comic.detail")
-  const canReview = usePerm("review.comic.review")
-  const canLog = usePerm("review.comic.log")
-
   const isParticipated = activeTab === "participated"
+
+  // Tab 决定当前生效的权限集合；"我参与的" 没有审核权限
+  const canDetail = isParticipated ? canJoinDetail : canMyDetail
+  const canReview = !isParticipated && canMyReview
+  const canLog    = isParticipated ? canJoinLog    : canMyLog
+
+  const visibleTabs = [
+    canMyList   && { key: "mine"         as const, label: "待我审核" },
+    canJoinList && { key: "participated" as const, label: "我参与的审核" },
+  ].filter(Boolean) as { key: ScopeTab; label: string }[]
 
   const fetchTasks = useCallback(async () => {
     setLoading(true)
@@ -1420,12 +1436,7 @@ export default function DraftReview() {
       {/* Tab 切换 */}
       <div className="mb-0 flex shrink-0">
         <div className="flex overflow-hidden rounded-t-[8px] border border-b-0 border-[#e5e7eb] bg-white">
-          {(
-            [
-              { key: "mine" as const, label: "待我审核" },
-              { key: "participated" as const, label: "我参与的审核" },
-            ] as const
-          ).map((tab, idx) => (
+          {visibleTabs.map((tab, idx) => (
             <button
               key={tab.key}
               type="button"

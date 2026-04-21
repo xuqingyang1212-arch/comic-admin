@@ -2,6 +2,7 @@ package handler
 
 import (
 	"comic-admin/internal/consts"
+	"comic-admin/internal/middleware"
 	"comic-admin/internal/model"
 	"comic-admin/internal/pkg/pagination"
 	"comic-admin/internal/pkg/response"
@@ -63,6 +64,21 @@ func ReviewRegistration(c *gin.Context) {
 		return
 	}
 
+	// approve / reject are separate permissions
+	switch req.Action {
+	case "approve":
+		if !middleware.EnsurePerm(c, "system.registerReview.approve") {
+			return
+		}
+	case "reject":
+		if !middleware.EnsurePerm(c, "system.registerReview.reject") {
+			return
+		}
+	default:
+		response.FailBadRequest(c, "无效的审核操作")
+		return
+	}
+
 	var regReq model.RegistrationRequest
 	if err := model.DB.First(&regReq, id).Error; err != nil {
 		response.FailNotFound(c, "注册申请不存在")
@@ -74,8 +90,8 @@ func ReviewRegistration(c *gin.Context) {
 		return
 	}
 
-	switch req.Action {
-	case "approve":
+	// Action has already been validated above; only "approve" / "reject" reach here.
+	if req.Action == "approve" {
 		txErr := model.DB.Transaction(func(tx *gorm.DB) error {
 			// Check email not taken in the meantime (inside tx to be consistent)
 			var existing model.User
@@ -108,15 +124,13 @@ func ReviewRegistration(c *gin.Context) {
 			return
 		}
 		response.OKMsg(c, "审核通过")
-
-	case "reject":
-		if err := model.DB.Model(&regReq).Update("review_status", consts.UserReviewRejected).Error; err != nil {
-			response.FailServer(c, "更新失败")
-			return
-		}
-		response.OKMsg(c, "审核不通过")
-
-	default:
-		response.FailBadRequest(c, "无效的审核操作")
+		return
 	}
+
+	// reject
+	if err := model.DB.Model(&regReq).Update("review_status", consts.UserReviewRejected).Error; err != nil {
+		response.FailServer(c, "更新失败")
+		return
+	}
+	response.OKMsg(c, "审核不通过")
 }
