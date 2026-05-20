@@ -354,7 +354,7 @@ backend/uploads/
 ## 十一、相关文档
 
 - **[ARCHITECTURE.md](./ARCHITECTURE.md)** — 完整技术架构（系统图 / 数据库 / API / 权限 / 流程时序图）
-- **[漫剧运营后台-PRD-v1.0.md](./漫剧运营后台-PRD-v1.0.md)** — 产品需求文档
+- **[漫剧运营后台-PRD.md](./漫剧运营后台-PRD.md)** — 产品需求文档（飞书 [在线版本](https://rcn6u2y4zn7a.feishu.cn/wiki/IM62wp1n2i703fkrU1Pc7PCSnYf) 的本地快照）
 - **[backend/migrations/README.md](./backend/migrations/README.md)** — 数据库迁移策略
 - **`.cursor/rules/design-system.mdc`** — 前端设计规范（颜色 / 字号 / 布局 / 组件）
 
